@@ -46,6 +46,8 @@ def force_subscription_keyboard(missing: list[dict], lang: str) -> InlineKeyboar
         elif item.get("username"):
             username = str(item["username"]).lstrip("@")
             keyboard.append([InlineKeyboardButton(text=f"{mode} • {title}", url=f"https://t.me/{quote_plus(username)}")])
+        else:
+            keyboard.append([InlineKeyboardButton(text=f"⚠️ {mode} • {title}", callback_data="force:target_error")])
     keyboard.append([InlineKeyboardButton(text=t(lang, "check"), callback_data="force:check")])
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 

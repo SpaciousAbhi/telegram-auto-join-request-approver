@@ -6,7 +6,7 @@ from aiogram.types import CallbackQuery, Message
 
 from app.i18n import t
 from app.keyboards import force_subscription_keyboard, language_keyboard, main_menu, subscriber_join_keyboard
-from app.services.telegram import force_target_completed, safe_answer, safe_edit
+from app.services.telegram import approve_join_request, can_approve_in_chat, force_target_completed, safe_answer, safe_edit
 
 router = Router()
 
@@ -21,7 +21,8 @@ async def _missing_force_targets(bot: Bot, db, user_id: int) -> list[dict]:
     for target in await db.force_chats():
         completed, error = await force_target_completed(bot, db, user_id, target)
         if error:
-            await db.db.force_chats.update_one({"chat_id": target["chat_id"]}, {"$set": {"last_error": error}})
+            await db.db.force_chats.update_one({"chat_id": target["chat_id"]}, {"$set": {"last_error": error, "last_check_failed_user": user_id}})
+            target = {**target, "last_error": error}
         if not completed:
             missing.append(target)
     return missing
@@ -73,9 +74,16 @@ async def start(message: Message, command: CommandObject, bot: Bot, db) -> None:
 
 
 async def _approve_verification(message: Message, bot: Bot, db, chat_id: int, user_id: int) -> bool:
-    from app.services.telegram import approve_join_request
-
     chat = await db.chat(chat_id) or {"title": str(chat_id)}
+    pending = await db.active_pending_for_user(chat_id, user_id)
+    if not pending:
+        await message.answer("⚠️ 𝗡𝗢 𝗔𝗖𝗧𝗜𝗩𝗘 𝗣𝗘𝗡𝗗𝗜𝗡𝗚 𝗝𝗢𝗜𝗡 𝗥𝗘𝗤𝗨𝗘𝗦𝗧 𝗪𝗔𝗦 𝗙𝗢𝗨𝗡𝗗 𝗙𝗢𝗥 𝗬𝗢𝗨.")
+        return True
+    can_approve, permission_error = await can_approve_in_chat(bot, chat_id)
+    if not can_approve:
+        await db.mark_request(chat_id, user_id, "permission_error", permission_error)
+        await message.answer("⚠️ 𝗩𝗘𝗥𝗜𝗙𝗜𝗘𝗗, 𝗕𝗨𝗧 𝗧𝗛𝗘 𝗕𝗢𝗧 𝗖𝗔𝗡𝗡𝗢𝗧 𝗔𝗣𝗣𝗥𝗢𝗩𝗘 𝗧𝗛𝗜𝗦 𝗥𝗘𝗤𝗨𝗘𝗦𝗧 𝗕𝗘𝗖𝗔𝗨𝗦𝗘 𝗔𝗗𝗠𝗜𝗡 𝗣𝗘𝗥𝗠𝗜𝗦𝗦𝗜𝗢𝗡 𝗜𝗦 𝗠𝗜𝗦𝗦𝗜𝗡𝗚.")
+        return True
     ok, error = await approve_join_request(bot, chat_id, user_id)
     await db.upsert_user(message.from_user, verified=ok)
     await db.mark_request(chat_id, user_id, "approved" if ok else "failed", error)
@@ -125,6 +133,11 @@ async def force_check(callback: CallbackQuery, bot: Bot, db) -> None:
         return
     me = await bot.get_me()
     await safe_edit(callback.message, t(lang, "start"), main_menu(lang, me.username))
+
+
+@router.callback_query(F.data == "force:target_error")
+async def force_target_error(callback: CallbackQuery) -> None:
+    await safe_answer(callback, "This force-subscription target has no usable invite link. Please contact the bot owner.", True)
 
 
 @router.callback_query(F.data == "nav:home")

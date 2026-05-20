@@ -26,6 +26,20 @@ async def safe_edit(message: Any, text: str, reply_markup: Any = None) -> None:
             await message.answer(text, reply_markup=reply_markup, disable_web_page_preview=True)
 
 
+def member_status_value(member: Any) -> str:
+    status = getattr(member, "status", "")
+    return getattr(status, "value", status)
+
+
+def is_joined_member(member: Any) -> bool:
+    status = member_status_value(member)
+    if status in {"creator", "administrator", "member"}:
+        return True
+    if status == "restricted" and bool(getattr(member, "is_member", False)):
+        return True
+    return False
+
+
 async def approve_join_request(bot: Bot, chat_id: int, user_id: int) -> tuple[bool, str | None]:
     while True:
         try:
@@ -51,12 +65,13 @@ async def inspect_bot_permissions(bot: Bot, chat_id: int, bot_id: int) -> Permis
     except (TelegramBadRequest, TelegramForbiddenError) as exc:
         return PermissionReport(False, False, REQUIRED_ADMIN_RIGHTS, str(exc))
 
-    is_admin = member.status in {"administrator", "creator"}
+    status = member_status_value(member)
+    is_admin = status in {"administrator", "creator"}
     missing = []
     for right in REQUIRED_ADMIN_RIGHTS:
         if not getattr(member, right, False):
             missing.append(right)
-    return PermissionReport(is_admin, is_admin and not missing, missing, member.status)
+    return PermissionReport(is_admin, is_admin and not missing, missing, status)
 
 
 async def can_approve_in_chat(bot: Bot, chat_id: int) -> tuple[bool, str | None]:
@@ -74,9 +89,7 @@ async def force_target_completed(bot: Bot, db: Any, user_id: int, target: dict) 
         return True, None
     try:
         member = await bot.get_chat_member(chat_id=target["chat_id"], user_id=user_id)
-        if member.status in {"member", "administrator", "creator"}:
-            return True, None
-        if target.get("mode") == "request" and member.status in {"restricted"}:
+        if is_joined_member(member):
             return True, None
         return False, None
     except (TelegramBadRequest, TelegramForbiddenError) as exc:

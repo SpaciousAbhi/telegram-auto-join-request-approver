@@ -3,7 +3,6 @@ from __future__ import annotations
 from aiogram import Bot, Router
 from aiogram.types import ChatJoinRequest, ChatMemberUpdated
 
-from app.i18n import t
 from app.keyboards import chat_manage_keyboard, robot_keyboard
 from app.services.formatters import connected_chat_report
 from app.services.telegram import approve_join_request, can_approve_in_chat, inspect_bot_permissions
@@ -61,8 +60,13 @@ async def join_request(request: ChatJoinRequest, bot: Bot, db) -> None:
     user = request.from_user
     invite = request.invite_link.invite_link if request.invite_link else None
     await db.add_pending_request(chat, user, invite)
-    if await db.db.force_chats.find_one({"chat_id": chat.id, "active": True, "mode": "request"}):
+    force_request_target = await db.db.force_chats.find_one({"chat_id": chat.id, "active": True, "mode": "request"})
+    if force_request_target:
         await db.mark_join_request_sent(user.id, chat.id)
+    connected_chat = await db.chat(chat.id)
+    if not connected_chat:
+        await db.mark_request(chat.id, user.id, "force_request_recorded" if force_request_target else "unmanaged_chat")
+        return
     can_approve, permission_error = await can_approve_in_chat(bot, chat.id)
     if not can_approve:
         await db.mark_request(chat.id, user.id, "permission_error", permission_error)

@@ -66,4 +66,5 @@ def bulk_status(job: dict) -> str:
         f"𝗦𝗞𝗜𝗣𝗣𝗘𝗗: {job.get('skipped', 0)}\n"
         f"𝗥𝗘𝗠𝗔𝗜𝗡𝗜𝗡𝗚: {remaining}\n"
         f"𝗖𝗢𝗠𝗣𝗟𝗘𝗧𝗜𝗢𝗡: {percent}%"
+        + (f"\n\n⚠️ 𝗟𝗔𝗦𝗧 𝗘𝗥𝗥𝗢𝗥: {job.get('last_error')}" if job.get("last_error") else "")
     )

@@ -111,6 +111,16 @@ class Database:
     async def pending_for_chat(self, chat_id: int, limit: int = 5000) -> list[dict[str, Any]]:
         return await self.db.pending_requests.find({"chat_id": chat_id, "status": "pending"}).sort("created_at", ASCENDING).to_list(length=limit)
 
+    async def active_pending_for_user(self, chat_id: int, user_id: int) -> dict[str, Any] | None:
+        return await self.db.pending_requests.find_one(
+            {"chat_id": chat_id, "user_id": user_id, "status": {"$in": ["pending", "awaiting_verification", "verification_dm_failed"]}}
+        )
+
+    async def bulk_pending_for_chat(self, chat_id: int, limit: int = 5000) -> list[dict[str, Any]]:
+        return await self.db.pending_requests.find(
+            {"chat_id": chat_id, "status": {"$in": ["pending", "verification_dm_failed"]}}
+        ).sort("created_at", ASCENDING).to_list(length=limit)
+
     async def record_approval(self, chat_id: int, success: bool) -> None:
         field = "total_approved" if success else "failed_approvals"
         await self.db.connected_chats.update_one({"chat_id": chat_id}, {"$inc": {field: 1}, "$set": {"updated_at": now()}})
