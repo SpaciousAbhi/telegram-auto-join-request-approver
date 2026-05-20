@@ -68,6 +68,7 @@ class Database:
 
     async def upsert_connected_chat(self, data: dict[str, Any]) -> None:
         payload = {**data, "updated_at": now(), "active": data.get("active", True)}
+        payload.pop("_id", None)
         await self.db.connected_chats.update_one(
             {"chat_id": data["chat_id"]},
             {"$set": payload, "$setOnInsert": {"created_at": now(), "total_approved": 0, "failed_approvals": 0}},
@@ -75,7 +76,9 @@ class Database:
         )
 
     async def chats_for_owner(self, owner_id: int) -> list[dict[str, Any]]:
-        return await self.db.connected_chats.find({"owner_id": owner_id}).sort("updated_at", DESCENDING).to_list(length=200)
+        return await self.db.connected_chats.find(
+            {"owner_id": owner_id, "removed_by_owner": {"$ne": True}}
+        ).sort("updated_at", DESCENDING).to_list(length=200)
 
     async def chat(self, chat_id: int) -> dict[str, Any] | None:
         return await self.db.connected_chats.find_one({"chat_id": chat_id})
@@ -83,7 +86,14 @@ class Database:
     async def mark_chat_inactive(self, chat_id: int, reason: str) -> None:
         await self.db.connected_chats.update_one({"chat_id": chat_id}, {"$set": {"active": False, "last_error": reason, "updated_at": now()}})
 
-    async def add_pending_request(self, chat: Any, user: Any, invite_link: str | None = None) -> None:
+    async def remove_connected_chat(self, chat_id: int, owner_id: int) -> bool:
+        result = await self.db.connected_chats.update_one(
+            {"chat_id": chat_id, "owner_id": owner_id},
+            {"$set": {"active": False, "removed_by_owner": True, "updated_at": now()}},
+        )
+        return result.modified_count > 0
+
+    async def add_pending_request(self, chat: Any, user: Any, invite_link: str | None = None, user_chat_id: int | None = None) -> None:
         await self.db.pending_requests.update_one(
             {"chat_id": chat.id, "user_id": user.id},
             {
@@ -91,6 +101,7 @@ class Database:
                     "chat_id": chat.id,
                     "chat_title": chat.title,
                     "user_id": user.id,
+                    "user_chat_id": user_chat_id,
                     "first_name": user.first_name,
                     "username": user.username,
                     "invite_link": invite_link,

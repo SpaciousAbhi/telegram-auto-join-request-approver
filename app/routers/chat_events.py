@@ -5,7 +5,7 @@ from aiogram.types import ChatJoinRequest, ChatMemberUpdated
 
 from app.keyboards import chat_manage_keyboard, robot_keyboard
 from app.services.formatters import connected_chat_report
-from app.services.telegram import approve_join_request, can_approve_in_chat, inspect_bot_permissions
+from app.services.telegram import approve_join_request, can_approve_in_chat, inspect_bot_permissions, member_status_value
 
 router = Router()
 
@@ -15,10 +15,11 @@ async def bot_membership_changed(event: ChatMemberUpdated, bot: Bot, db) -> None
     chat = event.chat
     user = event.from_user
     me = await bot.get_me()
-    if event.new_chat_member.status in {"left", "kicked"}:
+    new_status = member_status_value(event.new_chat_member)
+    if new_status in {"left", "kicked"}:
         await db.mark_chat_inactive(chat.id, "Bot removed from chat")
         return
-    if event.new_chat_member.status not in {"administrator", "member"}:
+    if new_status not in {"administrator", "member", "creator"}:
         return
     permissions = await inspect_bot_permissions(bot, chat.id, me.id)
     member_count = None
@@ -59,18 +60,23 @@ async def join_request(request: ChatJoinRequest, bot: Bot, db) -> None:
     chat = request.chat
     user = request.from_user
     invite = request.invite_link.invite_link if request.invite_link else None
-    await db.add_pending_request(chat, user, invite)
+    user_chat_id = getattr(request, "user_chat_id", None)
+    await db.add_pending_request(chat, user, invite, user_chat_id=user_chat_id)
     force_request_target = await db.db.force_chats.find_one({"chat_id": chat.id, "active": True, "mode": "request"})
     if force_request_target:
         await db.mark_join_request_sent(user.id, chat.id)
     connected_chat = await db.chat(chat.id)
-    if not connected_chat:
+    if not connected_chat and force_request_target:
         await db.mark_request(chat.id, user.id, "force_request_recorded" if force_request_target else "unmanaged_chat")
+        return
+    if connected_chat and connected_chat.get("removed_by_owner"):
+        await db.mark_request(chat.id, user.id, "chat_deactivated_by_owner")
         return
     can_approve, permission_error = await can_approve_in_chat(bot, chat.id)
     if not can_approve:
         await db.mark_request(chat.id, user.id, "permission_error", permission_error)
-        await db.mark_chat_inactive(chat.id, permission_error or "Missing approve permission")
+        if connected_chat:
+            await db.mark_chat_inactive(chat.id, permission_error or "Missing approve permission")
         return
     if settings.get("verification_enabled"):
         me = await bot.get_me()
@@ -80,7 +86,7 @@ async def join_request(request: ChatJoinRequest, bot: Bot, db) -> None:
             "𝗣𝗹𝗲𝗮𝘀𝗲 𝗽𝗿𝗼𝘃𝗲 𝘆𝗼𝘂 𝗮𝗿𝗲 𝗻𝗼𝘁 𝗮 𝗿𝗼𝗯𝗼𝘁 𝘁𝗼 𝗴𝗲𝘁 𝗮𝗰𝗰𝗲𝘀𝘀."
         )
         try:
-            await bot.send_message(user.id, text, reply_markup=robot_keyboard(me.username, payload))
+            await bot.send_message(user_chat_id or user.id, text, reply_markup=robot_keyboard(me.username, payload))
             await db.mark_request(chat.id, user.id, "awaiting_verification")
         except Exception as exc:
             await db.mark_request(chat.id, user.id, "verification_dm_failed", str(exc))

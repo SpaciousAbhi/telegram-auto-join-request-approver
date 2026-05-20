@@ -66,7 +66,17 @@ def chat_manage_keyboard(chat_id: int, lang: str) -> InlineKeyboardMarkup:
         inline_keyboard=[
             [InlineKeyboardButton(text="⚡ 𝗔𝗣𝗣𝗥𝗢𝗩𝗘 𝗔𝗟𝗟 𝗢𝗟𝗗 𝗣𝗘𝗡𝗗𝗜𝗡𝗚 𝗥𝗘𝗤𝗨𝗘𝗦𝗧𝗦", callback_data=f"bulk:chat:{chat_id}")],
             [InlineKeyboardButton(text=t(lang, "refresh"), callback_data=f"chat:{chat_id}")],
+            [InlineKeyboardButton(text="🗑 𝗥𝗘𝗠𝗢𝗩𝗘 / 𝗗𝗘𝗔𝗖𝗧𝗜𝗩𝗔𝗧𝗘", callback_data=f"chat:remove:{chat_id}")],
             [InlineKeyboardButton(text=t(lang, "back"), callback_data="chats:list")],
+        ]
+    )
+
+
+def remove_chat_keyboard(chat_id: int, lang: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="✅ 𝗖𝗢𝗡𝗙𝗜𝗥𝗠 𝗥𝗘𝗠𝗢𝗩𝗘", callback_data=f"chat:remove_confirm:{chat_id}")],
+            [InlineKeyboardButton(text=t(lang, "back"), callback_data=f"chat:{chat_id}")],
         ]
     )
 

@@ -36,7 +36,7 @@ async def continue_start(message: Message, bot: Bot, db, force_check: bool = Tru
         missing = await _missing_force_targets(bot, db, message.from_user.id)
         if missing:
             await message.answer(
-                f"{t(lang, 'force_title')}\n\n{t(lang, 'force_body')}",
+                force_text(lang, missing),
                 reply_markup=force_subscription_keyboard(missing, lang or "en"),
                 disable_web_page_preview=True,
             )
@@ -111,6 +111,14 @@ async def _send_subscriber_trick_if_enabled(message: Message, db) -> None:
     )
 
 
+def force_text(lang: str | None, missing: list[dict]) -> str:
+    text = f"{t(lang, 'force_title')}\n\n{t(lang, 'force_body')}"
+    broken = [item for item in missing if item.get("last_error")]
+    if broken:
+        text += "\n\n⚠️ 𝗦𝗼𝗺𝗲 𝗿𝗲𝗾𝘂𝗶𝗿𝗲𝗱 𝗰𝗵𝗮𝘁𝘀 𝗰𝗮𝗻𝗻𝗼𝘁 𝗯𝗲 𝗰𝗵𝗲𝗰𝗸𝗲𝗱 𝗿𝗶𝗴𝗵𝘁 𝗻𝗼𝘄. 𝗧𝗵𝗲 𝗼𝘄𝗻𝗲𝗿 𝗺𝘂𝘀𝘁 𝗳𝗶𝘅 𝗯𝗼𝘁 𝗮𝗰𝗰𝗲𝘀𝘀 𝗳𝗼𝗿 𝘁𝗵𝗼𝘀𝗲 𝗰𝗵𝗮𝘁𝘀."
+    return text
+
+
 @router.callback_query(F.data.startswith("lang:"))
 async def choose_language(callback: CallbackQuery, bot: Bot, db) -> None:
     await safe_answer(callback)
@@ -126,7 +134,7 @@ async def force_check(callback: CallbackQuery, bot: Bot, db) -> None:
     missing = await _missing_force_targets(bot, db, callback.from_user.id)
     lang = await _language_or_default(db, callback.from_user.id)
     if missing:
-        await safe_edit(callback.message, f"{t(lang, 'force_title')}\n\n{t(lang, 'force_body')}", force_subscription_keyboard(missing, lang))
+        await safe_edit(callback.message, force_text(lang, missing), force_subscription_keyboard(missing, lang))
         return
     if not (await db.user(callback.from_user.id) or {}).get("language"):
         await safe_edit(callback.message, t("en", "choose_language"), language_keyboard())
