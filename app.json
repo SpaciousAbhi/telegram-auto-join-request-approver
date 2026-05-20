@@ -1,0 +1,25 @@
+{
+  "name": "telegram-auto-join-request-approver",
+  "description": "Professional Telegram Auto Join Request Acceptor / Approver Bot with MongoDB storage and owner controls.",
+  "keywords": ["telegram", "bot", "aiogram", "mongodb", "heroku"],
+  "env": {
+    "BOT_TOKEN": {
+      "description": "Telegram bot token from BotFather.",
+      "required": true
+    },
+    "OWNER_ID": {
+      "description": "Main bot owner Telegram user ID.",
+      "required": true
+    },
+    "MONGO_DB_URI": {
+      "description": "MongoDB database URL.",
+      "required": true
+    }
+  },
+  "formation": {
+    "worker": {
+      "quantity": 1,
+      "size": "basic"
+    }
+  }
+}
