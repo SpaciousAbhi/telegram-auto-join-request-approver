@@ -7,10 +7,12 @@ Premium multilingual Telegram bot for automatically approving join requests in c
 - Bold branded Unicode UI across menus, buttons, reports, warnings, and owner screens.
 - Force Subscription before normal `/start`, with only missing required chats shown.
 - Language screen after Force Subscription: English, Hindi, Hinglish, Urdu.
+- Hindi uses Devanagari script and Urdu uses natural Urdu script for the main user flow.
 - Add-to-channel and add-to-group buttons using Telegram admin invite URLs with `can_invite_users`.
 - Automatic live join-request approval.
 - Owner-only hidden verification flow using “✅ 𝗜’𝗠 𝗡𝗢𝗧 𝗔 𝗥𝗢𝗕𝗢𝗧”.
 - Verification flow is separate from Force Subscription and never shows Force Subscription.
+- Subscriber Adding Trick after successful verification, managed separately from Force Subscription.
 - Connected chat report after the bot is added.
 - My Channels / Groups management panel.
 - Stored pending-request bulk approval with progress and pause/resume/stop controls.
@@ -72,6 +74,7 @@ From the owner panel you can:
 
 - Turn Force Subscription ON/OFF.
 - Turn hidden verification ON/OFF.
+- Manage Subscriber Adding Trick ON/OFF, optional/required mode, channels, and message text.
 - Turn bulk approval ON/OFF.
 - Add Force Subscription chats.
 - View Force Subscription errors.

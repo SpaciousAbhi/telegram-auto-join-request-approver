@@ -3,7 +3,8 @@ from app.services.formatters import bulk_status
 
 
 def test_language_fallback_uses_english_key():
-    assert "𝗔𝗗𝗗 𝗧𝗢 𝗖𝗛𝗔𝗡𝗡𝗘𝗟" in t("hi", "add_channel")
+    assert "चैनल" in t("hi", "add_channel")
+    assert "چینل" in t("ur", "add_channel")
     assert t("unknown", "choose_language") == "𝗖𝗛𝗢𝗢𝗦𝗘 𝗬𝗢𝗨𝗥 𝗟𝗔𝗡𝗚𝗨𝗔𝗚𝗘"
 
 

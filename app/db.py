@@ -24,6 +24,7 @@ class Database:
         await self.db.connected_chats.create_index([("owner_id", ASCENDING)])
         await self.db.pending_requests.create_index([("chat_id", ASCENDING), ("user_id", ASCENDING)], unique=True)
         await self.db.force_chats.create_index([("chat_id", ASCENDING)], unique=True)
+        await self.db.subscriber_trick_chats.create_index([("chat_id", ASCENDING)], unique=True)
         await self.db.join_request_marks.create_index([("user_id", ASCENDING), ("chat_id", ASCENDING)], unique=True)
         await self.db.bulk_jobs.create_index([("owner_id", ASCENDING), ("created_at", DESCENDING)])
         await self.db.broadcast_jobs.create_index([("created_at", DESCENDING)])
@@ -127,6 +128,19 @@ class Database:
     async def remove_force_chat(self, chat_id: int) -> None:
         await self.db.force_chats.update_one({"chat_id": chat_id}, {"$set": {"active": False, "updated_at": now()}})
 
+    async def add_subscriber_trick_chat(self, data: dict[str, Any]) -> None:
+        await self.db.subscriber_trick_chats.update_one(
+            {"chat_id": data["chat_id"]},
+            {"$set": {**data, "updated_at": now(), "active": True}, "$setOnInsert": {"created_at": now()}},
+            upsert=True,
+        )
+
+    async def subscriber_trick_chats(self) -> list[dict[str, Any]]:
+        return await self.db.subscriber_trick_chats.find({"active": True}).sort("created_at", ASCENDING).to_list(length=None)
+
+    async def remove_subscriber_trick_chat(self, chat_id: int) -> None:
+        await self.db.subscriber_trick_chats.update_one({"chat_id": chat_id}, {"$set": {"active": False, "updated_at": now()}})
+
     async def mark_join_request_sent(self, user_id: int, chat_id: int) -> None:
         await self.db.join_request_marks.update_one(
             {"user_id": user_id, "chat_id": chat_id},
@@ -166,6 +180,7 @@ class Database:
             "connected_chats": await self.db.connected_chats.count_documents({}),
             "active_chats": await self.db.connected_chats.count_documents({"active": True}),
             "force_chats": await self.db.force_chats.count_documents({"active": True}),
+            "subscriber_trick_chats": await self.db.subscriber_trick_chats.count_documents({"active": True}),
             "active_bulk_jobs": await self.db.bulk_jobs.count_documents({"status": {"$in": ["running", "paused"]}}),
             "today_approvals": await self.db.pending_requests.count_documents({"status": "approved", "updated_at": {"$gte": today}}),
             "failed_jobs": await self.db.bulk_jobs.count_documents({"failed": {"$gt": 0}}),

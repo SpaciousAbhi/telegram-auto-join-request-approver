@@ -59,6 +59,16 @@ async def inspect_bot_permissions(bot: Bot, chat_id: int, bot_id: int) -> Permis
     return PermissionReport(is_admin, is_admin and not missing, missing, member.status)
 
 
+async def can_approve_in_chat(bot: Bot, chat_id: int) -> tuple[bool, str | None]:
+    me = await bot.get_me()
+    report = await inspect_bot_permissions(bot, chat_id, me.id)
+    if not report.is_admin:
+        return False, "Bot is not admin in this chat."
+    if report.missing:
+        return False, "Missing permissions: " + ", ".join(report.missing)
+    return True, None
+
+
 async def force_target_completed(bot: Bot, db: Any, user_id: int, target: dict) -> tuple[bool, str | None]:
     if target.get("mode") == "request" and await db.has_join_request_mark(user_id, target["chat_id"]):
         return True, None

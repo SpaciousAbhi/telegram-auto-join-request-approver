@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from aiogram import Bot, F, Router
+from aiogram import Bot, Router
 from aiogram.types import ChatJoinRequest, ChatMemberUpdated
 
 from app.i18n import t
 from app.keyboards import chat_manage_keyboard, robot_keyboard
 from app.services.formatters import connected_chat_report
-from app.services.telegram import approve_join_request, inspect_bot_permissions
+from app.services.telegram import approve_join_request, can_approve_in_chat, inspect_bot_permissions
 
 router = Router()
 
@@ -63,6 +63,11 @@ async def join_request(request: ChatJoinRequest, bot: Bot, db) -> None:
     await db.add_pending_request(chat, user, invite)
     if await db.db.force_chats.find_one({"chat_id": chat.id, "active": True, "mode": "request"}):
         await db.mark_join_request_sent(user.id, chat.id)
+    can_approve, permission_error = await can_approve_in_chat(bot, chat.id)
+    if not can_approve:
+        await db.mark_request(chat.id, user.id, "permission_error", permission_error)
+        await db.mark_chat_inactive(chat.id, permission_error or "Missing approve permission")
+        return
     if settings.get("verification_enabled"):
         me = await bot.get_me()
         payload = f"verify_{chat.id}_{user.id}"
@@ -72,6 +77,7 @@ async def join_request(request: ChatJoinRequest, bot: Bot, db) -> None:
         )
         try:
             await bot.send_message(user.id, text, reply_markup=robot_keyboard(me.username, payload))
+            await db.mark_request(chat.id, user.id, "awaiting_verification")
         except Exception as exc:
             await db.mark_request(chat.id, user.id, "verification_dm_failed", str(exc))
         return

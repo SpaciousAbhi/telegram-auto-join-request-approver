@@ -5,7 +5,7 @@ from aiogram.filters import Command, CommandObject
 from aiogram.types import CallbackQuery, Message
 
 from app.i18n import t
-from app.keyboards import force_subscription_keyboard, language_keyboard, main_menu
+from app.keyboards import force_subscription_keyboard, language_keyboard, main_menu, subscriber_join_keyboard
 from app.services.telegram import force_target_completed, safe_answer, safe_edit
 
 router = Router()
@@ -52,11 +52,21 @@ async def start(message: Message, command: CommandObject, bot: Bot, db) -> None:
     await db.upsert_user(message.from_user)
     payload = command.args or ""
     if payload.startswith("verify_"):
-        _, chat_id, user_id = payload.split("_", 2)
-        if int(user_id) != message.from_user.id:
+        try:
+            _, chat_id, user_id = payload.split("_", 2)
+        except ValueError:
+            await message.answer("⚠️ 𝗩𝗘𝗥𝗜𝗙𝗜𝗖𝗔𝗧𝗜𝗢𝗡 𝗟𝗜𝗡𝗞 𝗜𝗦 𝗜𝗡𝗩𝗔𝗟𝗜𝗗.")
+            return
+        try:
+            chat_id_int = int(chat_id)
+            user_id_int = int(user_id)
+        except ValueError:
+            await message.answer("⚠️ 𝗩𝗘𝗥𝗜𝗙𝗜𝗖𝗔𝗧𝗜𝗢𝗡 𝗟𝗜𝗡𝗞 𝗜𝗦 𝗜𝗡𝗩𝗔𝗟𝗜𝗗.")
+            return
+        if user_id_int != message.from_user.id:
             await message.answer("⚠️ 𝗧𝗛𝗜𝗦 𝗩𝗘𝗥𝗜𝗙𝗜𝗖𝗔𝗧𝗜𝗢𝗡 𝗟𝗜𝗡𝗞 𝗜𝗦 𝗡𝗢𝗧 𝗙𝗢𝗥 𝗬𝗢𝗨.")
             return
-        ok = await _approve_verification(message, bot, db, int(chat_id), int(user_id))
+        ok = await _approve_verification(message, bot, db, chat_id_int, user_id_int)
         if ok:
             return
     await continue_start(message, bot, db, force_check=True)
@@ -71,10 +81,26 @@ async def _approve_verification(message: Message, bot: Bot, db, chat_id: int, us
     await db.mark_request(chat_id, user_id, "approved" if ok else "failed", error)
     await db.record_approval(chat_id, ok)
     if ok:
-        await message.answer(t((await _language_or_default(db, user_id)), "verified", chat_title=chat.get("title", chat_id)))
+        lang = await _language_or_default(db, user_id)
+        await message.answer(t(lang, "verified"))
+        await _send_subscriber_trick_if_enabled(message, db)
     else:
         await message.answer("⚠️ 𝗩𝗘𝗥𝗜𝗙𝗜𝗖𝗔𝗧𝗜𝗢𝗡 𝗖𝗢𝗠𝗣𝗟𝗘𝗧𝗘𝗗, 𝗕𝗨𝗧 𝗧𝗘𝗟𝗘𝗚𝗥𝗔𝗠 𝗗𝗜𝗗 𝗡𝗢𝗧 𝗔𝗟𝗟𝗢𝗪 𝗔𝗣𝗣𝗥𝗢𝗩𝗔𝗟. 𝗧𝗛𝗘 𝗢𝗪𝗡𝗘𝗥 𝗛𝗔𝗦 𝗕𝗘𝗘𝗡 𝗟𝗢𝗚𝗚𝗘𝗗.")
     return True
+
+
+async def _send_subscriber_trick_if_enabled(message: Message, db) -> None:
+    settings = await db.settings()
+    if not settings.get("subscriber_trick_enabled"):
+        return
+    chats = await db.subscriber_trick_chats()
+    if not chats:
+        return
+    await message.answer(
+        settings.get("subscriber_trick_message") or "👑 𝗝𝗢𝗜𝗡 𝗢𝗨𝗥 𝗦𝗘𝗟𝗘𝗖𝗧𝗘𝗗 𝗖𝗛𝗔𝗡𝗡𝗘𝗟𝗦.",
+        reply_markup=subscriber_join_keyboard(chats, bool(settings.get("subscriber_trick_required"))),
+        disable_web_page_preview=True,
+    )
 
 
 @router.callback_query(F.data.startswith("lang:"))

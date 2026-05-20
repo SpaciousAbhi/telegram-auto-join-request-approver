@@ -53,7 +53,9 @@ async def main() -> None:
         ]
     )
     await bot.delete_webhook(drop_pending_updates=False)
-    await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
+    allowed_updates = set(dp.resolve_used_update_types())
+    allowed_updates.update({"chat_join_request", "my_chat_member", "callback_query", "message"})
+    await dp.start_polling(bot, allowed_updates=sorted(allowed_updates))
 
 
 if __name__ == "__main__":
