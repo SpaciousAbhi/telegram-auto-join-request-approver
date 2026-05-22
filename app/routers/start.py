@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from aiogram import Bot, F, Router
 from aiogram.filters import Command, CommandObject
 from aiogram.types import CallbackQuery, Message
@@ -16,16 +17,23 @@ async def _language_or_default(db, user_id: int) -> str:
     return (user or {}).get("language") or "en"
 
 
+async def _check_target(bot: Bot, db, user_id: int, target: dict) -> dict | None:
+    completed, error = await force_target_completed(bot, db, user_id, target)
+    if error:
+        await db.db.force_chats.update_one({"chat_id": target["chat_id"]}, {"$set": {"last_error": error, "last_check_failed_user": user_id}})
+        target = {**target, "last_error": error}
+    if not completed:
+        return target
+    return None
+
+
 async def _missing_force_targets(bot: Bot, db, user_id: int) -> list[dict]:
-    missing = []
-    for target in await db.force_chats():
-        completed, error = await force_target_completed(bot, db, user_id, target)
-        if error:
-            await db.db.force_chats.update_one({"chat_id": target["chat_id"]}, {"$set": {"last_error": error, "last_check_failed_user": user_id}})
-            target = {**target, "last_error": error}
-        if not completed:
-            missing.append(target)
-    return missing
+    targets = await db.force_chats()
+    if not targets:
+        return []
+    tasks = [_check_target(bot, db, user_id, target) for target in targets]
+    results = await asyncio.gather(*tasks)
+    return [res for res in results if res is not None]
 
 
 async def continue_start(message: Message, bot: Bot, db, force_check: bool = True) -> None:

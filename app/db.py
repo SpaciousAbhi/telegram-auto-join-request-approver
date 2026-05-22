@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
@@ -8,15 +8,19 @@ from pymongo import ASCENDING, DESCENDING, ReturnDocument
 
 from app.constants import DEFAULT_SETTINGS
 
-
 def now() -> datetime:
-    return datetime.now(UTC)
-
+    return datetime.now(timezone.utc)
 
 class Database:
     def __init__(self, uri: str):
         self.client = AsyncIOMotorClient(uri)
         self.db: AsyncIOMotorDatabase = self.client.get_default_database(default="auto_join_request_bot")
+        self._settings_cache: dict[str, Any] = {}
+        self._settings_cache_time: float = 0
+        self._force_chats_cache: list[dict[str, Any]] = []
+        self._force_chats_cache_time: float = 0
+        self._sub_trick_chats_cache: list[dict[str, Any]] = []
+        self._sub_trick_chats_cache_time: float = 0
 
     async def setup(self) -> None:
         await self.db.users.create_index([("user_id", ASCENDING)], unique=True)
@@ -31,13 +35,19 @@ class Database:
         await self.db.settings.update_one({"_id": "runtime"}, {"$setOnInsert": DEFAULT_SETTINGS}, upsert=True)
 
     async def settings(self) -> dict[str, Any]:
+        current_time = datetime.now().timestamp()
+        if self._settings_cache and current_time - self._settings_cache_time < 60:
+            return self._settings_cache
         doc = await self.db.settings.find_one({"_id": "runtime"}) or {}
         merged = {**DEFAULT_SETTINGS, **doc}
         merged.pop("_id", None)
+        self._settings_cache = merged
+        self._settings_cache_time = current_time
         return merged
 
     async def set_setting(self, key: str, value: Any) -> None:
         await self.db.settings.update_one({"_id": "runtime"}, {"$set": {key: value}}, upsert=True)
+        self._settings_cache_time = 0  # Invalidate cache
 
     async def upsert_user(self, user: Any, language: str | None = None, verified: bool | None = None) -> None:
         data = {
@@ -136,18 +146,39 @@ class Database:
         field = "total_approved" if success else "failed_approvals"
         await self.db.connected_chats.update_one({"chat_id": chat_id}, {"$inc": {field: 1}, "$set": {"updated_at": now()}})
 
+    async def record_approvals(self, chat_id: int, successful: int, failed: int) -> None:
+        if successful == 0 and failed == 0:
+            return
+        update: dict[str, Any] = {"$set": {"updated_at": now()}}
+        inc = {}
+        if successful > 0:
+            inc["total_approved"] = successful
+        if failed > 0:
+            inc["failed_approvals"] = failed
+        if inc:
+            update["$inc"] = inc
+        await self.db.connected_chats.update_one({"chat_id": chat_id}, update)
+
     async def add_force_chat(self, data: dict[str, Any]) -> None:
         await self.db.force_chats.update_one(
             {"chat_id": data["chat_id"]},
             {"$set": {**data, "updated_at": now()}, "$setOnInsert": {"created_at": now(), "active": True}},
             upsert=True,
         )
+        self._force_chats_cache_time = 0
 
     async def force_chats(self) -> list[dict[str, Any]]:
-        return await self.db.force_chats.find({"active": True}).sort("created_at", ASCENDING).to_list(length=None)
+        current_time = datetime.now().timestamp()
+        if self._force_chats_cache and current_time - self._force_chats_cache_time < 60:
+            return self._force_chats_cache
+        chats = await self.db.force_chats.find({"active": True}).sort("created_at", ASCENDING).to_list(length=None)
+        self._force_chats_cache = chats
+        self._force_chats_cache_time = current_time
+        return chats
 
     async def remove_force_chat(self, chat_id: int) -> None:
         await self.db.force_chats.update_one({"chat_id": chat_id}, {"$set": {"active": False, "updated_at": now()}})
+        self._force_chats_cache_time = 0
 
     async def add_subscriber_trick_chat(self, data: dict[str, Any]) -> None:
         await self.db.subscriber_trick_chats.update_one(
@@ -155,12 +186,20 @@ class Database:
             {"$set": {**data, "updated_at": now(), "active": True}, "$setOnInsert": {"created_at": now()}},
             upsert=True,
         )
+        self._sub_trick_chats_cache_time = 0
 
     async def subscriber_trick_chats(self) -> list[dict[str, Any]]:
-        return await self.db.subscriber_trick_chats.find({"active": True}).sort("created_at", ASCENDING).to_list(length=None)
+        current_time = datetime.now().timestamp()
+        if self._sub_trick_chats_cache and current_time - self._sub_trick_chats_cache_time < 60:
+            return self._sub_trick_chats_cache
+        chats = await self.db.subscriber_trick_chats.find({"active": True}).sort("created_at", ASCENDING).to_list(length=None)
+        self._sub_trick_chats_cache = chats
+        self._sub_trick_chats_cache_time = current_time
+        return chats
 
     async def remove_subscriber_trick_chat(self, chat_id: int) -> None:
         await self.db.subscriber_trick_chats.update_one({"chat_id": chat_id}, {"$set": {"active": False, "updated_at": now()}})
+        self._sub_trick_chats_cache_time = 0
 
     async def mark_join_request_sent(self, user_id: int, chat_id: int) -> None:
         await self.db.join_request_marks.update_one(
