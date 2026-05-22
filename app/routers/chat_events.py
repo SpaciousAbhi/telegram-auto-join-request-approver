@@ -62,6 +62,11 @@ async def join_request(request: ChatJoinRequest, bot: Bot, db) -> None:
     invite = request.invite_link.invite_link if request.invite_link else None
     user_chat_id = getattr(request, "user_chat_id", None)
     await db.add_pending_request(chat, user, invite, user_chat_id=user_chat_id)
+    await db.log_event(
+        "join_request",
+        f"Join request received: {chat.title or chat.id}",
+        {"chat_id": chat.id, "user_id": user.id, "user_chat_id": user_chat_id},
+    )
     force_request_target = await db.db.force_chats.find_one({"chat_id": chat.id, "active": True, "mode": "request"})
     if force_request_target:
         await db.mark_join_request_sent(user.id, chat.id)
@@ -71,12 +76,19 @@ async def join_request(request: ChatJoinRequest, bot: Bot, db) -> None:
         return
     if connected_chat and connected_chat.get("removed_by_owner"):
         await db.mark_request(chat.id, user.id, "chat_deactivated_by_owner")
+        await db.log_event("join_request_skipped", "Join request skipped because chat is deactivated", {"chat_id": chat.id}, "warning")
         return
     can_approve, permission_error = await can_approve_in_chat(bot, chat.id)
     if not can_approve:
         await db.mark_request(chat.id, user.id, "permission_error", permission_error)
         if connected_chat:
             await db.mark_chat_inactive(chat.id, permission_error or "Missing approve permission")
+        await db.log_event(
+            "approval_error",
+            f"Approval permission failed: {chat.title or chat.id}",
+            {"chat_id": chat.id, "user_id": user.id, "error": permission_error},
+            "error",
+        )
         return
     if settings.get("verification_enabled"):
         me = await bot.get_me()
@@ -88,9 +100,22 @@ async def join_request(request: ChatJoinRequest, bot: Bot, db) -> None:
         try:
             await bot.send_message(user_chat_id or user.id, text, reply_markup=robot_keyboard(me.username, payload))
             await db.mark_request(chat.id, user.id, "awaiting_verification")
+            await db.log_event("verification_sent", f"Verification sent: {chat.title or chat.id}", {"chat_id": chat.id, "user_id": user.id})
         except Exception as exc:
             await db.mark_request(chat.id, user.id, "verification_dm_failed", str(exc))
+            await db.log_event(
+                "verification_error",
+                f"Verification DM failed: {chat.title or chat.id}",
+                {"chat_id": chat.id, "user_id": user.id, "error": str(exc)},
+                "error",
+            )
         return
     ok, error = await approve_join_request(bot, chat.id, user.id)
     await db.mark_request(chat.id, user.id, "approved" if ok else "failed", error)
     await db.record_approval(chat.id, ok)
+    await db.log_event(
+        "approval",
+        f"{'Approved' if ok else 'Approval failed'}: {chat.title or chat.id}",
+        {"chat_id": chat.id, "user_id": user.id, "error": error},
+        "info" if ok else "error",
+    )

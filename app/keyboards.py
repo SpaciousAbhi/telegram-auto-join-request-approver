@@ -149,9 +149,20 @@ def owner_panel_keyboard(settings: dict) -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text=f"🛡 𝗩𝗘𝗥𝗜𝗙𝗜𝗖𝗔𝗧𝗜𝗢𝗡: {verify}", callback_data="owner:toggle:verification_enabled")],
             [InlineKeyboardButton(text=f"👑 𝗦𝗨𝗕𝗦𝗖𝗥𝗜𝗕𝗘𝗥 𝗧𝗥𝗜𝗖𝗞: {sub}", callback_data="owner:sub:panel")],
             [InlineKeyboardButton(text=f"⚡ 𝗕𝗨𝗟𝗞 𝗔𝗣𝗣𝗥𝗢𝗩𝗔𝗟: {bulk}", callback_data="owner:toggle:bulk_approval_enabled")],
+            [InlineKeyboardButton(text="🧠 𝗦𝗬𝗦𝗧𝗘𝗠 𝗛𝗘𝗔𝗟𝗧𝗛", callback_data="owner:health")],
             [InlineKeyboardButton(text="➕ 𝗔𝗗𝗗 𝗙𝗢𝗥𝗖𝗘 𝗖𝗛𝗔𝗧", callback_data="owner:force:add")],
             [InlineKeyboardButton(text="📋 𝗙𝗢𝗥𝗖𝗘 𝗖𝗛𝗔𝗧𝗦", callback_data="owner:force:list")],
             [InlineKeyboardButton(text="📣 𝗕𝗥𝗢𝗔𝗗𝗖𝗔𝗦𝗧", callback_data="owner:broadcast")],
             [InlineKeyboardButton(text="🔄 𝗥𝗘𝗙𝗥𝗘𝗦𝗛", callback_data="owner:panel")],
+        ]
+    )
+
+
+def owner_health_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🧪 𝗔𝗨𝗗𝗜𝗧 𝗖𝗢𝗡𝗡𝗘𝗖𝗧𝗘𝗗 𝗖𝗛𝗔𝗧𝗦", callback_data="owner:audit_chats")],
+            [InlineKeyboardButton(text="🔄 𝗥𝗘𝗙𝗥𝗘𝗦𝗛", callback_data="owner:health")],
+            [InlineKeyboardButton(text="⬅️ 𝗕𝗔𝗖𝗞", callback_data="owner:panel")],
         ]
     )

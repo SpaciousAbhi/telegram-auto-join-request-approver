@@ -17,6 +17,8 @@ Premium multilingual Telegram bot for automatically approving join requests in c
 - My Channels / Groups management panel.
 - Stored pending-request bulk approval with progress and pause/resume/stop controls.
 - Owner panel with global toggles, stats, Force Subscription chat management, and broadcast.
+- System Health dashboard with recent event logs and connected-chat audit.
+- Startup default admin-rights setup for the Telegram add-bot flow.
 - Heroku-ready `Procfile`, `runtime.txt`, `.env.example`, and minimal required config.
 
 ## Required Config Vars
@@ -78,6 +80,7 @@ From the owner panel you can:
 - Turn bulk approval ON/OFF.
 - Add Force Subscription chats.
 - View Force Subscription errors.
+- Audit connected chats and inspect recent approval, verification, force-check, and bulk events.
 - Broadcast copied/forwarded/text/media messages to registered users.
 
 ## Telegram Permission Requirements

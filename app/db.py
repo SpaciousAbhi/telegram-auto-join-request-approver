@@ -28,6 +28,8 @@ class Database:
         await self.db.join_request_marks.create_index([("user_id", ASCENDING), ("chat_id", ASCENDING)], unique=True)
         await self.db.bulk_jobs.create_index([("owner_id", ASCENDING), ("created_at", DESCENDING)])
         await self.db.broadcast_jobs.create_index([("created_at", DESCENDING)])
+        await self.db.events.create_index([("created_at", DESCENDING)])
+        await self.db.events.create_index([("kind", ASCENDING), ("created_at", DESCENDING)])
         await self.db.settings.update_one({"_id": "runtime"}, {"$setOnInsert": DEFAULT_SETTINGS}, upsert=True)
 
     async def settings(self) -> dict[str, Any]:
@@ -38,6 +40,31 @@ class Database:
 
     async def set_setting(self, key: str, value: Any) -> None:
         await self.db.settings.update_one({"_id": "runtime"}, {"$set": {key: value}}, upsert=True)
+
+    async def log_event(self, kind: str, title: str, data: dict[str, Any] | None = None, severity: str = "info") -> None:
+        await self.db.events.insert_one(
+            {
+                "kind": kind,
+                "title": title,
+                "severity": severity,
+                "data": data or {},
+                "created_at": now(),
+            }
+        )
+
+    async def recent_events(self, limit: int = 10, severity: str | None = None) -> list[dict[str, Any]]:
+        query: dict[str, Any] = {}
+        if severity:
+            query["severity"] = severity
+        return await self.db.events.find(query).sort("created_at", DESCENDING).to_list(length=limit)
+
+    async def event_count(self, kind: str | None = None, severity: str | None = None) -> int:
+        query: dict[str, Any] = {}
+        if kind:
+            query["kind"] = kind
+        if severity:
+            query["severity"] = severity
+        return await self.db.events.count_documents(query)
 
     async def upsert_user(self, user: Any, language: str | None = None, verified: bool | None = None) -> None:
         data = {
@@ -205,4 +232,7 @@ class Database:
             "active_bulk_jobs": await self.db.bulk_jobs.count_documents({"status": {"$in": ["running", "paused"]}}),
             "today_approvals": await self.db.pending_requests.count_documents({"status": "approved", "updated_at": {"$gte": today}}),
             "failed_jobs": await self.db.bulk_jobs.count_documents({"failed": {"$gt": 0}}),
+            "errors": await self.event_count(severity="error"),
+            "warnings": await self.event_count(severity="warning"),
+            "join_requests": await self.event_count(kind="join_request"),
         }

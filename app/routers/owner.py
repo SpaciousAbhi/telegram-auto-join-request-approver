@@ -6,8 +6,9 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
-from app.keyboards import force_mode_keyboard, owner_panel_keyboard, subscriber_trick_keyboard
+from app.keyboards import force_mode_keyboard, owner_health_keyboard, owner_panel_keyboard, subscriber_trick_keyboard
 from app.services.formatters import owner_dashboard
+from app.services.diagnostics import audit_connected_chats, owner_health_text
 from app.services.telegram import safe_answer, safe_edit
 
 router = Router()
@@ -91,6 +92,24 @@ async def owner_toggle(callback: CallbackQuery, db, owner_id: int) -> None:
         await safe_edit(callback.message, owner_dashboard(stats, settings), owner_panel_keyboard(settings))
 
 
+@router.callback_query(F.data == "owner:health")
+async def owner_health(callback: CallbackQuery, db, owner_id: int) -> None:
+    if not await _is_owner(callback.from_user.id, owner_id):
+        return await safe_answer(callback, "Owner only", True)
+    await safe_answer(callback)
+    await safe_edit(callback.message, await owner_health_text(db), owner_health_keyboard())
+
+
+@router.callback_query(F.data == "owner:audit_chats")
+async def owner_audit_chats(callback: CallbackQuery, bot: Bot, db, owner_id: int) -> None:
+    if not await _is_owner(callback.from_user.id, owner_id):
+        return await safe_answer(callback, "Owner only", True)
+    await safe_answer(callback)
+    text = await audit_connected_chats(bot, db, callback.from_user.id)
+    await db.log_event("owner_audit", "Connected chat audit completed", {"owner_id": callback.from_user.id})
+    await safe_edit(callback.message, text, owner_health_keyboard())
+
+
 @router.callback_query(F.data == "owner:force:add")
 async def owner_force_add(callback: CallbackQuery, state: FSMContext, owner_id: int) -> None:
     if not await _is_owner(callback.from_user.id, owner_id):
@@ -133,7 +152,7 @@ async def receive_force_chat(message: Message, state: FSMContext, bot: Bot, owne
 
 
 @router.callback_query(F.data.startswith("owner:force:mode:"))
-async def choose_force_mode(callback: CallbackQuery, state: FSMContext, db, owner_id: int) -> None:
+async def choose_force_mode(callback: CallbackQuery, state: FSMContext, bot: Bot, db, owner_id: int) -> None:
     if not await _is_owner(callback.from_user.id, owner_id):
         return await safe_answer(callback, "Owner only", True)
     await safe_answer(callback)
@@ -143,9 +162,22 @@ async def choose_force_mode(callback: CallbackQuery, state: FSMContext, db, owne
     if not chat_data:
         await safe_edit(callback.message, "⚠️ 𝗦𝗘𝗦𝗦𝗜𝗢𝗡 𝗘𝗫𝗣𝗜𝗥𝗘𝗗. 𝗣𝗹𝗲𝗮𝘀𝗲 𝘀𝘁𝗮𝗿𝘁 𝗮𝗱𝗱𝗶𝗻𝗴 𝘁𝗵𝗲 𝗳𝗼𝗿𝗰𝗲 𝗰𝗵𝗮𝘁 𝗮𝗴𝗮𝗶𝗻.", owner_panel_keyboard(await db.settings()))
         return
-    await db.add_force_chat({**chat_data, "mode": mode, "added_by": owner_id})
+    last_error = None
+    try:
+        me = await bot.get_me()
+        await bot.get_chat_member(chat_data["chat_id"], me.id)
+    except Exception as exc:
+        last_error = f"Bot cannot check this chat yet: {exc}"
+    await db.add_force_chat({**chat_data, "mode": mode, "added_by": owner_id, "last_error": last_error})
+    await db.log_event(
+        "force_chat_added",
+        f"Force chat added: {chat_data['title']}",
+        {"chat_id": chat_data["chat_id"], "mode": mode, "last_error": last_error},
+        "warning" if last_error else "info",
+    )
     await state.clear()
-    await safe_edit(callback.message, f"✅ 𝗙𝗢𝗥𝗖𝗘 𝗖𝗛𝗔𝗧 𝗔𝗗𝗗𝗘𝗗\n\n𝗡𝗔𝗠𝗘: {chat_data['title']}\n𝗠𝗢𝗗𝗘: {mode.upper()}", owner_panel_keyboard(await db.settings()))
+    warning = f"\n\n⚠️ {last_error}\n𝗔𝗱𝗱 𝘁𝗵𝗲 𝗯𝗼𝘁 𝘁𝗼 𝘁𝗵𝗶𝘀 𝗰𝗵𝗮𝘁 𝘀𝗼 𝗖𝗵𝗲𝗰𝗸 𝗔𝗰𝗰𝗲𝘀𝘀 𝗰𝗮𝗻 𝘄𝗼𝗿𝗸." if last_error else ""
+    await safe_edit(callback.message, f"✅ 𝗙𝗢𝗥𝗖𝗘 𝗖𝗛𝗔𝗧 𝗔𝗗𝗗𝗘𝗗\n\n𝗡𝗔𝗠𝗘: {chat_data['title']}\n𝗠𝗢𝗗𝗘: {mode.upper()}{warning}", owner_panel_keyboard(await db.settings()))
 
 
 @router.callback_query(F.data == "owner:force:list")

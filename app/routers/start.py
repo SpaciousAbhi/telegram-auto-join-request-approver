@@ -22,6 +22,12 @@ async def _missing_force_targets(bot: Bot, db, user_id: int) -> list[dict]:
         completed, error = await force_target_completed(bot, db, user_id, target)
         if error:
             await db.db.force_chats.update_one({"chat_id": target["chat_id"]}, {"$set": {"last_error": error, "last_check_failed_user": user_id}})
+            await db.log_event(
+                "force_check_error",
+                f"Force check failed: {target.get('title', target['chat_id'])}",
+                {"chat_id": target["chat_id"], "user_id": user_id, "error": error},
+                "warning",
+            )
             target = {**target, "last_error": error}
         if not completed:
             missing.append(target)
@@ -91,9 +97,16 @@ async def _approve_verification(message: Message, bot: Bot, db, chat_id: int, us
     if ok:
         lang = await _language_or_default(db, user_id)
         await message.answer(t(lang, "verified"))
+        await db.log_event("verification_approved", f"Verified and approved: {chat.get('title', chat_id)}", {"chat_id": chat_id, "user_id": user_id})
         await _send_subscriber_trick_if_enabled(message, db)
     else:
         await message.answer("⚠️ 𝗩𝗘𝗥𝗜𝗙𝗜𝗖𝗔𝗧𝗜𝗢𝗡 𝗖𝗢𝗠𝗣𝗟𝗘𝗧𝗘𝗗, 𝗕𝗨𝗧 𝗧𝗘𝗟𝗘𝗚𝗥𝗔𝗠 𝗗𝗜𝗗 𝗡𝗢𝗧 𝗔𝗟𝗟𝗢𝗪 𝗔𝗣𝗣𝗥𝗢𝗩𝗔𝗟. 𝗧𝗛𝗘 𝗢𝗪𝗡𝗘𝗥 𝗛𝗔𝗦 𝗕𝗘𝗘𝗡 𝗟𝗢𝗚𝗚𝗘𝗗.")
+        await db.log_event(
+            "verification_approval_error",
+            f"Verification approval failed: {chat.get('title', chat_id)}",
+            {"chat_id": chat_id, "user_id": user_id, "error": error},
+            "error",
+        )
     return True
 
 
@@ -134,8 +147,10 @@ async def force_check(callback: CallbackQuery, bot: Bot, db) -> None:
     missing = await _missing_force_targets(bot, db, callback.from_user.id)
     lang = await _language_or_default(db, callback.from_user.id)
     if missing:
+        await db.log_event("force_check", "Force access still missing", {"user_id": callback.from_user.id, "missing": len(missing)})
         await safe_edit(callback.message, force_text(lang, missing), force_subscription_keyboard(missing, lang))
         return
+    await db.log_event("force_check", "Force access unlocked", {"user_id": callback.from_user.id})
     if not (await db.user(callback.from_user.id) or {}).get("language"):
         await safe_edit(callback.message, t("en", "choose_language"), language_keyboard())
         return

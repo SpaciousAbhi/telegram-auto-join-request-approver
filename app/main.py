@@ -8,7 +8,7 @@ from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.types import BotCommand, TelegramObject
+from aiogram.types import BotCommand, ChatAdministratorRights, TelegramObject
 from aiogram import BaseMiddleware
 
 from app.config import get_settings
@@ -46,6 +46,28 @@ async def main() -> None:
     dp.include_router(bulk.router)
     dp.include_router(owner.router)
     dp.include_router(chat_events.router)
+    default_rights = ChatAdministratorRights(
+        is_anonymous=False,
+        can_manage_chat=True,
+        can_delete_messages=False,
+        can_manage_video_chats=False,
+        can_restrict_members=False,
+        can_promote_members=False,
+        can_change_info=False,
+        can_invite_users=True,
+        can_post_stories=False,
+        can_edit_stories=False,
+        can_delete_stories=False,
+        can_post_messages=False,
+        can_edit_messages=False,
+        can_pin_messages=False,
+        can_manage_topics=False,
+    )
+    try:
+        await bot.set_my_default_administrator_rights(default_rights, for_channels=True)
+        await bot.set_my_default_administrator_rights(default_rights, for_channels=False)
+    except Exception as exc:
+        await db.log_event("startup_warning", "Could not set default admin rights", {"error": str(exc)}, "warning")
     await bot.set_my_commands(
         [
             BotCommand(command="start", description="Open main menu"),
@@ -55,6 +77,7 @@ async def main() -> None:
     await bot.delete_webhook(drop_pending_updates=False)
     allowed_updates = set(dp.resolve_used_update_types())
     allowed_updates.update({"chat_join_request", "my_chat_member", "callback_query", "message"})
+    await db.log_event("startup", "Bot worker started", {"allowed_updates": sorted(allowed_updates)})
     await dp.start_polling(bot, allowed_updates=sorted(allowed_updates))
 
 

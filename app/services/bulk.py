@@ -18,6 +18,7 @@ class BulkApprovalService:
     async def start(self, bot: Bot, owner_id: int, chat_id: int, message: Any, speed_per_minute: int) -> dict:
         pending = await self.db.bulk_pending_for_chat(chat_id)
         job = await self.db.create_bulk_job(owner_id, chat_id, len(pending))
+        await self.db.log_event("bulk_start", "Bulk approval started", {"owner_id": owner_id, "chat_id": chat_id, "total": len(pending)})
         task = asyncio.create_task(self._run(bot, job, pending, message, speed_per_minute))
         self._tasks[str(job["_id"])] = task
         return job
@@ -28,6 +29,7 @@ class BulkApprovalService:
         can_approve, permission_error = await can_approve_in_chat(bot, job["chat_id"])
         if not can_approve:
             job = await self.db.update_bulk_job(job["_id"], status="failed", failed=len(pending), last_error=permission_error)
+            await self.db.log_event("bulk_error", "Bulk approval permission failed", {"chat_id": job["chat_id"], "error": permission_error}, "error")
             try:
                 await message.edit_text(bulk_status(job), reply_markup=bulk_control_keyboard(str(job["_id"])))
             except Exception:
@@ -63,6 +65,12 @@ class BulkApprovalService:
                     pass
             await asyncio.sleep(interval)
         job = await self.db.update_bulk_job(job["_id"], status="completed", approved=approved, failed=failed, skipped=skipped)
+        await self.db.log_event(
+            "bulk_completed",
+            "Bulk approval completed",
+            {"chat_id": job["chat_id"], "approved": approved, "failed": failed, "skipped": skipped},
+            "info" if failed == 0 else "warning",
+        )
         try:
             await message.edit_text(bulk_status(job), reply_markup=bulk_control_keyboard(str(job["_id"])))
         except Exception:
