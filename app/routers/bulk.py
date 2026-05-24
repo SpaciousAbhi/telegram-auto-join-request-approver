@@ -47,7 +47,7 @@ async def _start_for_chat(callback: CallbackQuery, bot: Bot, db, bulk_service, c
         await safe_edit(callback.message, "✅ 𝗡𝗢 𝗦𝗧𝗢𝗥𝗘𝗗 𝗣𝗘𝗡𝗗𝗜𝗡𝗚 𝗥𝗘𝗤𝗨𝗘𝗦𝗧𝗦 𝗙𝗢𝗨𝗡𝗗 𝗙𝗢𝗥 𝗧𝗛𝗜𝗦 𝗖𝗛𝗔𝗧.\n\n𝗢𝗽𝗲𝗻 /start 𝘁𝗼 𝗿𝗲𝘁𝘂𝗿𝗻 𝗵𝗼𝗺𝗲.", home_keyboard())
         return
     progress = await callback.message.answer("⚡ 𝗕𝗨𝗟𝗞 𝗔𝗣𝗣𝗥𝗢𝗩𝗔𝗟 𝗦𝗧𝗔𝗥𝗧𝗜𝗡𝗚...")
-    job = await bulk_service.start(bot, callback.from_user.id, chat_id, progress, int(settings.get("approval_speed_per_minute", 600)))
+    job = await bulk_service.start(bot, callback.from_user.id, chat_id, progress.chat.id, progress.message_id, int(settings.get("approval_speed_per_minute", 600)))
     await progress.edit_text(bulk_status(job), reply_markup=bulk_control_keyboard(str(job["_id"])))
 
 

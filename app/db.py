@@ -154,6 +154,11 @@ class Database:
             {"chat_id": chat_id, "user_id": user_id, "status": {"$in": ["pending", "awaiting_verification", "verification_dm_failed"]}}
         )
 
+    async def active_pendings_for_user_globally(self, user_id: int) -> list[dict[str, Any]]:
+        return await self.db.pending_requests.find(
+            {"user_id": user_id, "status": {"$in": ["pending", "awaiting_verification", "verification_dm_failed"]}}
+        ).to_list(length=100)
+
     async def bulk_pending_for_chat(self, chat_id: int, limit: int = 5000) -> list[dict[str, Any]]:
         return await self.db.pending_requests.find(
             {"chat_id": chat_id, "status": {"$in": ["pending", "verification_dm_failed"]}}
@@ -199,7 +204,7 @@ class Database:
     async def has_join_request_mark(self, user_id: int, chat_id: int) -> bool:
         return bool(await self.db.join_request_marks.find_one({"user_id": user_id, "chat_id": chat_id}))
 
-    async def create_bulk_job(self, owner_id: int, chat_id: int, total: int) -> dict[str, Any]:
+    async def create_bulk_job(self, owner_id: int, chat_id: int, total: int, progress_chat_id: int | None = None, progress_message_id: int | None = None) -> dict[str, Any]:
         doc = {
             "owner_id": owner_id,
             "chat_id": chat_id,
@@ -208,6 +213,8 @@ class Database:
             "failed": 0,
             "skipped": 0,
             "status": "running",
+            "progress_chat_id": progress_chat_id,
+            "progress_message_id": progress_message_id,
             "created_at": now(),
             "updated_at": now(),
         }

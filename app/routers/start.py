@@ -5,7 +5,7 @@ from aiogram.filters import Command, CommandObject
 from aiogram.types import CallbackQuery, Message
 
 from app.i18n import t
-from app.keyboards import force_subscription_keyboard, language_keyboard, main_menu, subscriber_join_keyboard
+from app.keyboards import force_subscription_keyboard, language_keyboard, main_menu, subscriber_join_keyboard, robot_keyboard
 from app.services.telegram import approve_join_request, can_approve_in_chat, force_target_completed, safe_answer, safe_edit
 
 router = Router()
@@ -76,6 +76,22 @@ async def start(message: Message, command: CommandObject, bot: Bot, db) -> None:
         ok = await _approve_verification(message, bot, db, chat_id_int, user_id_int)
         if ok:
             return
+    
+    settings = await db.settings()
+    if settings.get("verification_enabled"):
+        pending_verifications = await db.active_pendings_for_user_globally(message.from_user.id)
+        if pending_verifications:
+            me = await bot.get_me()
+            for req in pending_verifications:
+                chat_title = req.get("chat_title") or f"Chat {req['chat_id']}"
+                payload = f"verify_{req['chat_id']}_{req['user_id']}"
+                text = (
+                    f"𝗛𝗲𝗹𝗹𝗼, 𝘆𝗼𝘂 𝗵𝗮𝘃𝗲 𝗮 𝗽𝗲𝗻𝗱𝗶𝗻𝗴 𝗿𝗲𝗾𝘂𝗲𝘀𝘁 𝘁𝗼 𝗷𝗼𝗶𝗻 {chat_title}. "
+                    "𝗣𝗹𝗲𝗮𝘀𝗲 𝗽𝗿𝗼𝘃𝗲 𝘆𝗼𝘂 𝗮𝗿𝗲 𝗻𝗼𝘁 𝗮 𝗿𝗼𝗯𝗼𝘁 𝘁𝗼 𝗴𝗲𝘁 𝗮𝗰𝗰𝗲𝘀𝘀."
+                )
+                await message.answer(text, reply_markup=robot_keyboard(me.username, payload))
+            return
+
     await continue_start(message, bot, db, force_check=True)
 
 

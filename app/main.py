@@ -77,6 +77,13 @@ async def main() -> None:
     await bot.delete_webhook(drop_pending_updates=False)
     allowed_updates = set(dp.resolve_used_update_types())
     allowed_updates.update({"chat_join_request", "my_chat_member", "callback_query", "message"})
+    # Start background worker loop
+    from app.services.worker import worker_loop
+    asyncio.create_task(worker_loop(bot, db))
+
+    # Resume running bulk jobs
+    asyncio.create_task(bulk_service.resume_all_jobs(bot))
+
     await db.log_event("startup", "Bot worker started", {"allowed_updates": sorted(allowed_updates)})
     await dp.start_polling(bot, allowed_updates=sorted(allowed_updates))
 
