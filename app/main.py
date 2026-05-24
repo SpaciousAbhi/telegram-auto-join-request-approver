@@ -17,6 +17,9 @@ from app.routers import bulk, chat_events, chats, owner, settings, start
 from app.services.bulk import BulkApprovalService
 
 
+BACKGROUND_TASKS = set()
+
+
 class DependencyMiddleware(BaseMiddleware):
     def __init__(self, **deps: Any):
         self.deps = deps
@@ -79,10 +82,14 @@ async def main() -> None:
     allowed_updates.update({"chat_join_request", "my_chat_member", "callback_query", "message"})
     # Start background worker loop
     from app.services.worker import worker_loop
-    asyncio.create_task(worker_loop(bot, db))
+    worker_task = asyncio.create_task(worker_loop(bot, db))
+    BACKGROUND_TASKS.add(worker_task)
+    worker_task.add_done_callback(BACKGROUND_TASKS.discard)
 
     # Resume running bulk jobs
-    asyncio.create_task(bulk_service.resume_all_jobs(bot))
+    resume_task = asyncio.create_task(bulk_service.resume_all_jobs(bot))
+    BACKGROUND_TASKS.add(resume_task)
+    resume_task.add_done_callback(BACKGROUND_TASKS.discard)
 
     await db.log_event("startup", "Bot worker started", {"allowed_updates": sorted(allowed_updates)})
     await dp.start_polling(bot, allowed_updates=sorted(allowed_updates))

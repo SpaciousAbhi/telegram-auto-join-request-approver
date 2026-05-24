@@ -141,6 +141,8 @@ class Database:
         )
 
     async def mark_request(self, chat_id: int, user_id: int, status: str, error: str | None = None) -> None:
+        if error and "hide_requester_missing" in error.lower():
+            status = "skipped"
         update = {"status": status, "updated_at": now()}
         if error:
             update["error"] = error

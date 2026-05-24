@@ -48,7 +48,10 @@ async def approve_join_request(bot: Bot, chat_id: int, user_id: int) -> tuple[bo
         except TelegramRetryAfter as exc:
             await asyncio.sleep(exc.retry_after + 1)
         except (TelegramBadRequest, TelegramForbiddenError) as exc:
-            return False, str(exc)
+            err_msg = str(exc)
+            if "user_already_participant" in err_msg.lower():
+                return True, None
+            return False, err_msg
 
 
 @dataclass
