@@ -112,7 +112,33 @@ async def _approve_verification(message: Message, bot: Bot, db, chat_id: int, us
     await db.record_approval(chat_id, ok)
     if ok:
         lang = await _language_or_default(db, user_id)
-        await message.answer(t(lang, "verified"))
+        channel_link = None
+        try:
+            invite_link_obj = await bot.create_chat_invite_link(
+                chat_id=chat_id,
+                name=f"User {user_id} - Verification Success"
+            )
+            channel_link = invite_link_obj.invite_link
+        except Exception as exc:
+            await db.log_event(
+                "invite_link_creation_error",
+                f"Could not create invite link for chat {chat_id}",
+                {"error": str(exc)},
+                "warning",
+            )
+            if chat.get("username"):
+                channel_link = f"https://t.me/{chat['username']}"
+            else:
+                channel_link = chat.get("invite_link")
+
+        reply_markup = None
+        if channel_link:
+            from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+            reply_markup = InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(text=t(lang, "open_channel"), url=channel_link)
+            ]])
+
+        await message.answer(t(lang, "verified"), reply_markup=reply_markup)
         await db.log_event("verification_approved", f"Verified and approved: {chat.get('title', chat_id)}", {"chat_id": chat_id, "user_id": user_id})
         await _send_subscriber_trick_if_enabled(message, db)
     else:
