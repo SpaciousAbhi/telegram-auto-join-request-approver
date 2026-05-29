@@ -10,6 +10,9 @@ Premium multilingual Telegram bot for automatically approving join requests in c
 - Hindi uses Devanagari script and Urdu uses natural Urdu script for the main user flow.
 - Add-to-channel and add-to-group buttons using Telegram admin invite URLs with `can_invite_users`.
 - Automatic live join-request approval.
+- Persistent retry queue for observed join requests, including Telegram rate limits, transient API failures, permission problems, and worker restarts.
+- Every observed request is moved to an accepted, retrying, skipped, or failed state with an owner-visible event log reason.
+- Accepted users receive an `Open the Channel` inline button; private chats use a fresh non-expiring invite link whenever Telegram allows it.
 - Owner-only hidden verification flow using “✅ 𝗜’𝗠 𝗡𝗢𝗧 𝗔 𝗥𝗢𝗕𝗢𝗧”.
 - Verification flow is separate from Force Subscription and never shows Force Subscription.
 - Subscriber Adding Trick after successful verification, managed separately from Force Subscription.
@@ -90,6 +93,8 @@ For approval to work, the bot must be added as admin to the target channel/group
 ## Important Bot API Boundary
 
 Telegram Bot API can approve a join request when the bot knows the requesting user ID, and the bot receives new `chat_join_request` updates while it is admin. The Bot API does not expose a full endpoint to enumerate every historical pending join request that existed before the bot received updates. Therefore, this project’s bulk approval processes stored pending requests observed by the bot. Unknown historical requests require Telegram-side manual handling or an additional MTProto/user-account workflow, which is intentionally not included because this project requires only `BOT_TOKEN`, `OWNER_ID`, and `MONGO_DB_URI`.
+
+Observed requests are restart-safe. Each request stores its status, approval attempts, next retry time, temporary processing lock, notification status, and generated Open Channel link metadata. If the worker restarts, due retry items resume from MongoDB instead of resetting in memory.
 
 ## Validation
 

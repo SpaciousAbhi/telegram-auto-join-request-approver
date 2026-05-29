@@ -30,6 +30,9 @@ async def owner_health_text(db: Any) -> str:
         "",
         "𝗥𝗘𝗖𝗘𝗡𝗧 𝗘𝗩𝗘𝗡𝗧𝗦:",
     ]
+    lines.insert(8, f"NOTIFICATION FAILURES: {stats.get('notification_failures', 0)}")
+    lines.insert(8, f"RETRY QUEUE: {stats.get('retrying_requests', 0)}")
+    lines.insert(8, f"OPEN REQUEST STATES: {stats.get('open_requests', 0)}")
     if not recent:
         lines.append("• 𝗡𝗼 𝗲𝘃𝗲𝗻𝘁𝘀 𝗿𝗲𝗰𝗼𝗿𝗱𝗲𝗱 𝘆𝗲𝘁.")
     for event in recent:

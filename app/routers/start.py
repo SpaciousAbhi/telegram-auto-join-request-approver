@@ -6,7 +6,8 @@ from aiogram.types import CallbackQuery, Message
 
 from app.i18n import t
 from app.keyboards import force_subscription_keyboard, language_keyboard, main_menu, subscriber_join_keyboard, robot_keyboard
-from app.services.telegram import approve_join_request, can_approve_in_chat, force_target_completed, safe_answer, safe_edit
+from app.services.approval import approval_notification_markup, approve_stored_request
+from app.services.telegram import force_target_completed, safe_answer, safe_edit
 
 router = Router()
 
@@ -99,56 +100,44 @@ async def _approve_verification(message: Message, bot: Bot, db, chat_id: int, us
     chat = await db.chat(chat_id) or {"title": str(chat_id)}
     pending = await db.active_pending_for_user(chat_id, user_id)
     if not pending:
-        await message.answer("⚠️ 𝗡𝗢 𝗔𝗖𝗧𝗜𝗩𝗘 𝗣𝗘𝗡𝗗𝗜𝗡𝗚 𝗝𝗢𝗜𝗡 𝗥𝗘𝗤𝗨𝗘𝗦𝗧 𝗪𝗔𝗦 𝗙𝗢𝗨𝗡𝗗 𝗙𝗢𝗥 𝗬𝗢𝗨.")
+        await message.answer("No active pending join request was found for you.")
         return True
-    can_approve, permission_error = await can_approve_in_chat(bot, chat_id)
-    if not can_approve:
-        await db.mark_request(chat_id, user_id, "permission_error", permission_error)
-        await message.answer("⚠️ 𝗩𝗘𝗥𝗜𝗙𝗜𝗘𝗗, 𝗕𝗨𝗧 𝗧𝗛𝗘 𝗕𝗢𝗧 𝗖𝗔𝗡𝗡𝗢𝗧 𝗔𝗣𝗣𝗥𝗢𝗩𝗘 𝗧𝗛𝗜𝗦 𝗥𝗘𝗤𝗨𝗘𝗦𝗧 𝗕𝗘𝗖𝗔𝗨𝗦𝗘 𝗔𝗗𝗠𝗜𝗡 𝗣𝗘𝗥𝗠𝗜𝗦𝗦𝗜𝗢𝗡 𝗜𝗦 𝗠𝗜𝗦𝗦𝗜𝗡𝗚.")
-        return True
-    ok, error = await approve_join_request(bot, chat_id, user_id)
-    await db.upsert_user(message.from_user, verified=ok)
-    await db.mark_request(chat_id, user_id, "approved" if ok else "failed", error)
-    await db.record_approval(chat_id, ok)
-    if ok:
+
+    result = await approve_stored_request(bot, db, pending, "verification_click", notify_user=False)
+    await db.upsert_user(message.from_user, verified=result.ok)
+    if result.ok:
         lang = await _language_or_default(db, user_id)
-        channel_link = None
-        try:
-            invite_link_obj = await bot.create_chat_invite_link(
-                chat_id=chat_id,
-                name=f"User {user_id} - Verification Success"
-            )
-            channel_link = invite_link_obj.invite_link
-        except Exception as exc:
+        reply_markup, channel_link, link_warning = await approval_notification_markup(bot, db, pending)
+        if channel_link:
+            await db.mark_notification(chat_id, user_id, "sent", link=channel_link)
+        else:
+            await db.mark_notification(chat_id, user_id, "failed", link_warning or "Open Channel link is unavailable.")
+        if link_warning:
             await db.log_event(
                 "invite_link_creation_error",
-                f"Could not create invite link for chat {chat_id}",
-                {"error": str(exc)},
+                "Open Channel link needed a fallback",
+                {"chat_id": chat_id, "user_id": user_id, "error": link_warning},
                 "warning",
             )
-            if chat.get("username"):
-                channel_link = f"https://t.me/{chat['username']}"
-            else:
-                channel_link = chat.get("invite_link")
-
-        reply_markup = None
-        if channel_link:
-            from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
-            reply_markup = InlineKeyboardMarkup(inline_keyboard=[[
-                InlineKeyboardButton(text=t(lang, "open_channel"), url=channel_link)
-            ]])
-
         await message.answer(t(lang, "verified"), reply_markup=reply_markup)
-        await db.log_event("verification_approved", f"Verified and approved: {chat.get('title', chat_id)}", {"chat_id": chat_id, "user_id": user_id})
-        await _send_subscriber_trick_if_enabled(message, db)
-    else:
-        await message.answer("⚠️ 𝗩𝗘𝗥𝗜𝗙𝗜𝗖𝗔𝗧𝗜𝗢𝗡 𝗖𝗢𝗠𝗣𝗟𝗘𝗧𝗘𝗗, 𝗕𝗨𝗧 𝗧𝗘𝗟𝗘𝗚𝗥𝗔𝗠 𝗗𝗜𝗗 𝗡𝗢𝗧 𝗔𝗟𝗟𝗢𝗪 𝗔𝗣𝗣𝗥𝗢𝗩𝗔𝗟. 𝗧𝗛𝗘 𝗢𝗪𝗡𝗘𝗥 𝗛𝗔𝗦 𝗕𝗘𝗘𝗡 𝗟𝗢𝗚𝗚𝗘𝗗.")
         await db.log_event(
-            "verification_approval_error",
-            f"Verification approval failed: {chat.get('title', chat_id)}",
-            {"chat_id": chat_id, "user_id": user_id, "error": error},
-            "error",
+            "verification_approved",
+            f"Verified and approved: {chat.get('title', chat_id)}",
+            {"chat_id": chat_id, "user_id": user_id, "open_channel_link": bool(channel_link)},
         )
+        await _send_subscriber_trick_if_enabled(message, db)
+        return True
+
+    if result.retryable:
+        await message.answer("Approval is queued and will retry automatically. The owner can see the exact reason in System Health.")
+    else:
+        await message.answer("Approval could not be completed because Telegram no longer exposes this pending request. The owner can see the exact reason in System Health.")
+    await db.log_event(
+        "verification_approval_error",
+        f"Verification approval failed: {chat.get('title', chat_id)}",
+        {"chat_id": chat_id, "user_id": user_id, "error": result.error, "retryable": result.retryable},
+        "warning" if result.retryable else "error",
+    )
     return True
 
 

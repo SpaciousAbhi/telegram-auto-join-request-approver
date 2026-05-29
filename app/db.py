@@ -23,6 +23,8 @@ class Database:
         await self.db.connected_chats.create_index([("chat_id", ASCENDING)], unique=True)
         await self.db.connected_chats.create_index([("owner_id", ASCENDING)])
         await self.db.pending_requests.create_index([("chat_id", ASCENDING), ("user_id", ASCENDING)], unique=True)
+        await self.db.pending_requests.create_index([("status", ASCENDING), ("next_retry_at", ASCENDING), ("created_at", ASCENDING)])
+        await self.db.pending_requests.create_index([("notify_status", ASCENDING), ("notify_next_retry_at", ASCENDING)])
         await self.db.force_chats.create_index([("chat_id", ASCENDING)], unique=True)
         await self.db.subscriber_trick_chats.create_index([("chat_id", ASCENDING)], unique=True)
         await self.db.join_request_marks.create_index([("user_id", ASCENDING), ("chat_id", ASCENDING)], unique=True)
@@ -133,6 +135,16 @@ class Database:
                     "username": user.username,
                     "invite_link": invite_link,
                     "status": "pending",
+                    "next_retry_at": now(),
+                    "approval_locked_until": None,
+                    "approval_attempts": 0,
+                    "error": None,
+                    "last_error": None,
+                    "notify_status": "pending",
+                    "notify_next_retry_at": now(),
+                    "notify_attempts": 0,
+                    "notify_error": None,
+                    "open_channel_link": None,
                     "updated_at": now(),
                 },
                 "$setOnInsert": {"created_at": now()},
@@ -143,13 +155,122 @@ class Database:
     async def mark_request(self, chat_id: int, user_id: int, status: str, error: str | None = None) -> None:
         if error and "hide_requester_missing" in error.lower():
             status = "skipped"
-        update = {"status": status, "updated_at": now()}
+        update = {"status": status, "updated_at": now(), "approval_locked_until": None}
+        if status in {"approved", "skipped", "failed", "chat_deactivated_by_owner", "force_request_recorded", "unmanaged_chat"}:
+            update["next_retry_at"] = None
         if error:
             update["error"] = error
+            update["last_error"] = error
         await self.db.pending_requests.update_one({"chat_id": chat_id, "user_id": user_id}, {"$set": update})
 
+    async def claim_request_for_approval(self, chat_id: int, user_id: int, lock_seconds: int = 180) -> dict[str, Any] | None:
+        now_time = now()
+        return await self.db.pending_requests.find_one_and_update(
+            {
+                "chat_id": chat_id,
+                "user_id": user_id,
+                "$or": [
+                    {"approval_locked_until": {"$exists": False}},
+                    {"approval_locked_until": None},
+                    {"approval_locked_until": {"$lte": now_time}},
+                ],
+            },
+            {
+                "$set": {
+                    "approval_locked_until": now_time + timedelta(seconds=lock_seconds),
+                    "last_attempt_at": now_time,
+                    "updated_at": now_time,
+                },
+                "$inc": {"approval_attempts": 1},
+            },
+            return_document=ReturnDocument.AFTER,
+        )
+
+    async def schedule_request_retry(
+        self,
+        chat_id: int,
+        user_id: int,
+        status: str,
+        error: str | None,
+        retry_at: datetime,
+    ) -> None:
+        update: dict[str, Any] = {
+            "status": status,
+            "next_retry_at": retry_at,
+            "approval_locked_until": None,
+            "updated_at": now(),
+        }
+        if error:
+            update["error"] = error
+            update["last_error"] = error
+        await self.db.pending_requests.update_one({"chat_id": chat_id, "user_id": user_id}, {"$set": update})
+
+    async def due_approval_requests(self, statuses: set[str], limit: int = 200) -> list[dict[str, Any]]:
+        now_time = now()
+        query = {
+            "status": {"$in": sorted(statuses)},
+            "$and": [
+                {
+                    "$or": [
+                        {"next_retry_at": {"$exists": False}},
+                        {"next_retry_at": None},
+                        {"next_retry_at": {"$lte": now_time}},
+                    ]
+                },
+                {
+                    "$or": [
+                        {"approval_locked_until": {"$exists": False}},
+                        {"approval_locked_until": None},
+                        {"approval_locked_until": {"$lte": now_time}},
+                    ]
+                },
+            ],
+        }
+        return await self.db.pending_requests.find(query).sort("created_at", ASCENDING).to_list(length=limit)
+
+    async def mark_notification(
+        self,
+        chat_id: int,
+        user_id: int,
+        status: str,
+        error: str | None = None,
+        retry_at: datetime | None = None,
+        link: str | None = None,
+    ) -> None:
+        update: dict[str, Any] = {
+            "notify_status": status,
+            "notify_next_retry_at": retry_at,
+            "notification_updated_at": now(),
+        }
+        if error:
+            update["notify_error"] = error
+        if link:
+            update["open_channel_link"] = link
+            update["open_channel_link_created_at"] = now()
+        inc = {"notify_attempts": 1} if status in {"sent", "failed", "retry"} else {}
+        payload: dict[str, Any] = {"$set": update}
+        if inc:
+            payload["$inc"] = inc
+        await self.db.pending_requests.update_one({"chat_id": chat_id, "user_id": user_id}, payload)
+
+    async def due_notification_requests(self, limit: int = 100) -> list[dict[str, Any]]:
+        now_time = now()
+        return await self.db.pending_requests.find(
+            {
+                "status": "approved",
+                "notify_status": {"$in": ["pending", "retry"]},
+                "$or": [
+                    {"notify_next_retry_at": {"$exists": False}},
+                    {"notify_next_retry_at": None},
+                    {"notify_next_retry_at": {"$lte": now_time}},
+                ],
+            }
+        ).sort("updated_at", ASCENDING).to_list(length=limit)
+
     async def pending_for_chat(self, chat_id: int, limit: int = 5000) -> list[dict[str, Any]]:
-        return await self.db.pending_requests.find({"chat_id": chat_id, "status": "pending"}).sort("created_at", ASCENDING).to_list(length=limit)
+        return await self.db.pending_requests.find(
+            {"chat_id": chat_id, "status": {"$in": ["pending", "verification_dm_failed", "approval_retry", "permission_error", "failed"]}}
+        ).sort("created_at", ASCENDING).to_list(length=limit)
 
     async def active_pending_for_user(self, chat_id: int, user_id: int) -> dict[str, Any] | None:
         return await self.db.pending_requests.find_one(
@@ -163,7 +284,7 @@ class Database:
 
     async def bulk_pending_for_chat(self, chat_id: int, limit: int = 5000) -> list[dict[str, Any]]:
         return await self.db.pending_requests.find(
-            {"chat_id": chat_id, "status": {"$in": ["pending", "verification_dm_failed"]}}
+            {"chat_id": chat_id, "status": {"$in": ["pending", "verification_dm_failed", "approval_retry", "permission_error", "failed"]}}
         ).sort("created_at", ASCENDING).to_list(length=limit)
 
     async def record_approval(self, chat_id: int, success: bool) -> None:
@@ -240,6 +361,9 @@ class Database:
             "subscriber_trick_chats": await self.db.subscriber_trick_chats.count_documents({"active": True}),
             "active_bulk_jobs": await self.db.bulk_jobs.count_documents({"status": {"$in": ["running", "paused"]}}),
             "today_approvals": await self.db.pending_requests.count_documents({"status": "approved", "updated_at": {"$gte": today}}),
+            "open_requests": await self.db.pending_requests.count_documents({"status": {"$in": ["pending", "awaiting_verification", "verification_dm_failed", "approval_retry", "permission_error"]}}),
+            "retrying_requests": await self.db.pending_requests.count_documents({"status": {"$in": ["verification_dm_failed", "approval_retry", "permission_error"]}}),
+            "notification_failures": await self.db.pending_requests.count_documents({"status": "approved", "notify_status": "failed"}),
             "failed_jobs": await self.db.bulk_jobs.count_documents({"failed": {"$gt": 0}}),
             "errors": await self.event_count(severity="error"),
             "warnings": await self.event_count(severity="warning"),

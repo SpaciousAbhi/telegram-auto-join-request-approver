@@ -7,7 +7,7 @@ from aiogram import Bot
 
 from app.services.formatters import bulk_status
 from app.keyboards import bulk_control_keyboard
-from app.services.telegram import approve_join_request, can_approve_in_chat
+from app.services.approval import approve_stored_request
 
 
 class BulkProgressUpdater:
@@ -75,12 +75,7 @@ class BulkApprovalService:
         approved = job.get("approved", 0) if is_resume else 0
         failed = job.get("failed", 0) if is_resume else 0
         skipped = job.get("skipped", 0) if is_resume else 0
-        can_approve, permission_error = await can_approve_in_chat(bot, job["chat_id"])
-        if not can_approve:
-            job = await self.db.update_bulk_job(job["_id"], status="failed", failed=len(pending), last_error=permission_error)
-            await self.db.log_event("bulk_error", "Bulk approval permission failed", {"chat_id": job["chat_id"], "error": permission_error}, "error")
-            await updater.update(job)
-            return
+        permission_cache: dict[int, tuple[bool, str | None]] = {}
         for idx, item in enumerate(pending, start=1):
             current = await self.db.db.bulk_jobs.find_one({"_id": job["_id"]})
             if not current or current.get("status") == "stopped":
@@ -89,20 +84,25 @@ class BulkApprovalService:
             while current.get("status") == "paused":
                 await asyncio.sleep(2)
                 current = await self.db.db.bulk_jobs.find_one({"_id": job["_id"]})
-            if item.get("status") not in {"pending", "verification_dm_failed"}:
+            if item.get("status") not in {"pending", "verification_dm_failed", "approval_retry", "permission_error", "failed"}:
                 skipped += 1
                 await self.db.mark_request(item["chat_id"], item["user_id"], "skipped", "Request is no longer pending in local queue.")
                 job = await self.db.update_bulk_job(job["_id"], approved=approved, failed=failed, skipped=skipped)
                 continue
-            ok, error = await approve_join_request(bot, item["chat_id"], item["user_id"])
-            if ok:
+            result = await approve_stored_request(
+                bot,
+                self.db,
+                item,
+                "bulk_job",
+                notify_user=True,
+                permission_cache=permission_cache,
+            )
+            if result.ok:
                 approved += 1
-                await self.db.mark_request(item["chat_id"], item["user_id"], "approved")
-                await self.db.record_approval(item["chat_id"], True)
+            elif result.status in {"skipped", "chat_deactivated_by_owner"}:
+                skipped += 1
             else:
                 failed += 1
-                await self.db.mark_request(item["chat_id"], item["user_id"], "failed", error)
-                await self.db.record_approval(item["chat_id"], False)
             job = await self.db.update_bulk_job(job["_id"], approved=approved, failed=failed, skipped=skipped)
             if idx == 1 or idx % 25 == 0 or idx == len(pending):
                 await updater.update(job)

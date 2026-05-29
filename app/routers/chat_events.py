@@ -5,7 +5,8 @@ from aiogram.types import ChatJoinRequest, ChatMemberUpdated
 
 from app.keyboards import chat_manage_keyboard, robot_keyboard
 from app.services.formatters import connected_chat_report
-from app.services.telegram import approve_join_request, can_approve_in_chat, inspect_bot_permissions, member_status_value
+from app.services.approval import approve_stored_request, is_permission_error, retry_delay_for, utcnow
+from app.services.telegram import can_approve_in_chat, inspect_bot_permissions, member_status_value
 
 router = Router()
 
@@ -80,13 +81,14 @@ async def join_request(request: ChatJoinRequest, bot: Bot, db) -> None:
         return
     can_approve, permission_error = await can_approve_in_chat(bot, chat.id)
     if not can_approve:
-        await db.mark_request(chat.id, user.id, "permission_error", permission_error)
-        if connected_chat:
+        retry_at = utcnow() + retry_delay_for({"approval_attempts": 0}, permission_error, permission=True)
+        await db.schedule_request_retry(chat.id, user.id, "permission_error", permission_error, retry_at)
+        if connected_chat and is_permission_error(permission_error):
             await db.mark_chat_inactive(chat.id, permission_error or "Missing approve permission")
         await db.log_event(
-            "approval_error",
-            f"Approval permission failed: {chat.title or chat.id}",
-            {"chat_id": chat.id, "user_id": user.id, "error": permission_error},
+            "approval_retry_scheduled",
+            f"Approval delayed until bot permissions are fixed: {chat.title or chat.id}",
+            {"chat_id": chat.id, "user_id": user.id, "retry_at": retry_at.isoformat(), "error": permission_error},
             "error",
         )
         return
@@ -102,20 +104,25 @@ async def join_request(request: ChatJoinRequest, bot: Bot, db) -> None:
             await db.mark_request(chat.id, user.id, "awaiting_verification")
             await db.log_event("verification_sent", f"Verification sent: {chat.title or chat.id}", {"chat_id": chat.id, "user_id": user.id})
         except Exception as exc:
-            await db.mark_request(chat.id, user.id, "verification_dm_failed", str(exc))
+            retry_at = utcnow() + retry_delay_for({"approval_attempts": 0}, str(exc))
+            await db.schedule_request_retry(chat.id, user.id, "verification_dm_failed", str(exc), retry_at)
             await db.log_event(
                 "verification_error",
                 f"Verification DM failed: {chat.title or chat.id}",
-                {"chat_id": chat.id, "user_id": user.id, "error": str(exc)},
-                "error",
+                {"chat_id": chat.id, "user_id": user.id, "retry_at": retry_at.isoformat(), "error": str(exc)},
+                "warning",
             )
         return
-    ok, error = await approve_join_request(bot, chat.id, user.id)
-    await db.mark_request(chat.id, user.id, "approved" if ok else "failed", error)
-    await db.record_approval(chat.id, ok)
-    await db.log_event(
-        "approval",
-        f"{'Approved' if ok else 'Approval failed'}: {chat.title or chat.id}",
-        {"chat_id": chat.id, "user_id": user.id, "error": error},
-        "info" if ok else "error",
+    await approve_stored_request(
+        bot,
+        db,
+        {
+            "chat_id": chat.id,
+            "chat_title": chat.title,
+            "user_id": user.id,
+            "user_chat_id": user_chat_id,
+            "invite_link": invite,
+        },
+        "join_request_update",
+        notify_user=True,
     )

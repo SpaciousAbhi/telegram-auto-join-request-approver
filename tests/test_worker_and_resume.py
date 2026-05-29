@@ -30,17 +30,23 @@ async def test_process_pending_requests_verification_disabled():
     db = AsyncMock()
     db.settings = AsyncMock(return_value={"verification_enabled": False})
     db.chat = AsyncMock(return_value={"active": True})
-    
-    mock_cursor = AsyncMock()
-    mock_cursor.to_list = AsyncMock(return_value=[{
+    db.due_notification_requests = AsyncMock(return_value=[])
+    item = {
         "chat_id": 123,
         "user_id": 456,
         "chat_title": "Test Chat",
-        "status": "pending"
-    }])
-    db.db.pending_requests.find = MagicMock(return_value=mock_cursor)
+        "status": "pending",
+        "approval_attempts": 0,
+        "user_chat_id": 456,
+    }
+    db.due_approval_requests = AsyncMock(return_value=[item])
+    db.claim_request_for_approval = AsyncMock(return_value={**item, "approval_attempts": 1})
+
+    invite = MagicMock()
+    invite.invite_link = "https://t.me/+fresh"
+    bot.create_chat_invite_link = AsyncMock(return_value=invite)
 
     await process_pending_requests(bot, db)
     
     assert db.mark_request.called
-    db.mark_request.assert_called_with(123, 456, "approved", None)
+    db.mark_request.assert_called_with(123, 456, "approved")

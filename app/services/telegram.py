@@ -1,11 +1,17 @@
 from __future__ import annotations
 
-import asyncio
 from dataclasses import dataclass
 from typing import Any
 
 from aiogram import Bot
-from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError, TelegramRetryAfter
+from aiogram.exceptions import (
+    TelegramAPIError,
+    TelegramBadRequest,
+    TelegramForbiddenError,
+    TelegramNetworkError,
+    TelegramRetryAfter,
+    TelegramServerError,
+)
 
 from app.constants import REQUIRED_ADMIN_RIGHTS
 
@@ -41,17 +47,20 @@ def is_joined_member(member: Any) -> bool:
 
 
 async def approve_join_request(bot: Bot, chat_id: int, user_id: int) -> tuple[bool, str | None]:
-    while True:
-        try:
-            await bot.approve_chat_join_request(chat_id=chat_id, user_id=user_id)
+    try:
+        await bot.approve_chat_join_request(chat_id=chat_id, user_id=user_id)
+        return True, None
+    except TelegramRetryAfter as exc:
+        return False, f"TelegramRetryAfter: retry_after={exc.retry_after}"
+    except (TelegramBadRequest, TelegramForbiddenError) as exc:
+        err_msg = str(exc)
+        if "user_already_participant" in err_msg.lower():
             return True, None
-        except TelegramRetryAfter as exc:
-            await asyncio.sleep(exc.retry_after + 1)
-        except (TelegramBadRequest, TelegramForbiddenError) as exc:
-            err_msg = str(exc)
-            if "user_already_participant" in err_msg.lower():
-                return True, None
-            return False, err_msg
+        return False, err_msg
+    except (TelegramNetworkError, TelegramServerError) as exc:
+        return False, str(exc)
+    except TelegramAPIError as exc:
+        return False, str(exc)
 
 
 @dataclass
@@ -78,8 +87,11 @@ async def inspect_bot_permissions(bot: Bot, chat_id: int, bot_id: int) -> Permis
 
 
 async def can_approve_in_chat(bot: Bot, chat_id: int) -> tuple[bool, str | None]:
-    me = await bot.get_me()
-    report = await inspect_bot_permissions(bot, chat_id, me.id)
+    try:
+        me = await bot.get_me()
+        report = await inspect_bot_permissions(bot, chat_id, me.id)
+    except Exception as exc:
+        return False, f"Could not inspect bot permissions: {exc}"
     if not report.is_admin:
         return False, "Bot is not admin in this chat."
     if report.missing:
