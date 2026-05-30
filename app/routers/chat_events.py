@@ -57,28 +57,65 @@ async def bot_membership_changed(event: ChatMemberUpdated, bot: Bot, db) -> None
 
 @router.chat_join_request()
 async def join_request(request: ChatJoinRequest, bot: Bot, db) -> None:
-    settings = await db.settings()
+    # 1. Fetch settings with fallback
+    settings = {}
+    try:
+        settings = await db.settings()
+    except Exception as exc:
+        try:
+            await db.log_event("settings_fetch_error", f"Failed to fetch settings: {exc}", severity="warning")
+        except Exception:
+            pass
+
     chat = request.chat
     user = request.from_user
     invite = request.invite_link.invite_link if request.invite_link else None
     user_chat_id = getattr(request, "user_chat_id", None)
-    await db.add_pending_request(chat, user, invite, user_chat_id=user_chat_id)
-    await db.log_event(
-        "join_request",
-        f"Join request received: {chat.title or chat.id}",
-        {"chat_id": chat.id, "user_id": user.id, "user_chat_id": user_chat_id},
-    )
-    force_request_target = await db.db.force_chats.find_one({"chat_id": chat.id, "active": True, "mode": "request"})
+
+    # 2. Save request to DB with fallback
+    db_ok = False
+    try:
+        await db.add_pending_request(chat, user, invite, user_chat_id=user_chat_id)
+        db_ok = True
+    except Exception as exc:
+        try:
+            await db.log_event("db_save_error", f"Failed to save join request: {exc}", severity="error")
+        except Exception:
+            pass
+
+    # Fallback to immediate approval if DB is down/failing
+    if not db_ok:
+        await approve_join_request(bot, chat.id, user.id)
+        return
+
+    # Normal flow if DB is OK
+    force_request_target = None
+    try:
+        force_request_target = await db.db.force_chats.find_one({"chat_id": chat.id, "active": True, "mode": "request"})
+    except Exception:
+        pass
+
     if force_request_target:
-        await db.mark_join_request_sent(user.id, chat.id)
-    connected_chat = await db.chat(chat.id)
+        try:
+            await db.mark_join_request_sent(user.id, chat.id)
+        except Exception:
+            pass
+
+    connected_chat = None
+    try:
+        connected_chat = await db.chat(chat.id)
+    except Exception:
+        pass
+
     if not connected_chat and force_request_target:
         await db.mark_request(chat.id, user.id, "force_request_recorded" if force_request_target else "unmanaged_chat")
         return
+
     if connected_chat and connected_chat.get("removed_by_owner"):
         await db.mark_request(chat.id, user.id, "chat_deactivated_by_owner")
         await db.log_event("join_request_skipped", "Join request skipped because chat is deactivated", {"chat_id": chat.id}, "warning")
         return
+
     can_approve, permission_error = await can_approve_in_chat(bot, chat.id)
     if not can_approve:
         retry_at = utcnow() + retry_delay_for({"approval_attempts": 0}, permission_error, permission=True)
@@ -92,6 +129,15 @@ async def join_request(request: ChatJoinRequest, bot: Bot, db) -> None:
             "error",
         )
         return
+
+    item_data = {
+        "chat_id": chat.id,
+        "chat_title": chat.title or chat.full_name or str(chat.id),
+        "user_id": user.id,
+        "user_chat_id": user_chat_id,
+        "invite_link": invite,
+    }
+
     if settings.get("verification_enabled"):
         me = await bot.get_me()
         payload = f"verify_{chat.id}_{user.id}"
@@ -104,25 +150,26 @@ async def join_request(request: ChatJoinRequest, bot: Bot, db) -> None:
             await db.mark_request(chat.id, user.id, "awaiting_verification")
             await db.log_event("verification_sent", f"Verification sent: {chat.title or chat.id}", {"chat_id": chat.id, "user_id": user.id})
         except Exception as exc:
-            retry_at = utcnow() + retry_delay_for({"approval_attempts": 0}, str(exc))
-            await db.schedule_request_retry(chat.id, user.id, "verification_dm_failed", str(exc), retry_at)
+            # Fallback to immediate approval if verification DM fails to send
             await db.log_event(
-                "verification_error",
-                f"Verification DM failed: {chat.title or chat.id}",
-                {"chat_id": chat.id, "user_id": user.id, "retry_at": retry_at.isoformat(), "error": str(exc)},
+                "verification_dm_failed_fallback",
+                f"Verification DM failed, approving directly: {chat.title or chat.id}",
+                {"chat_id": chat.id, "user_id": user.id, "error": str(exc)},
                 "warning",
             )
+            await approve_stored_request(
+                bot,
+                db,
+                item_data,
+                "join_request_verification_fallback",
+                notify_user=True,
+            )
         return
+
     await approve_stored_request(
         bot,
         db,
-        {
-            "chat_id": chat.id,
-            "chat_title": chat.title,
-            "user_id": user.id,
-            "user_chat_id": user_chat_id,
-            "invite_link": invite,
-        },
+        item_data,
         "join_request_update",
         notify_user=True,
     )

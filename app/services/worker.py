@@ -64,6 +64,7 @@ async def process_pending_requests(bot: Bot, db: Database) -> None:
                 )
 
     else:
+        # 1. Process requests due for verification DM (VERIFICATION_RETRY_STATUSES = {"pending", "verification_dm_failed"})
         items_to_verify = await db.due_approval_requests(VERIFICATION_RETRY_STATUSES, limit=100)
 
         if items_to_verify:
@@ -101,13 +102,20 @@ async def process_pending_requests(bot: Bot, db: Database) -> None:
                         {"chat_id": chat_id, "user_id": user_id}
                     )
                 except Exception as exc:
-                    retry_at = utcnow() + timedelta(minutes=10)
-                    await db.schedule_request_retry(chat_id, user_id, "verification_dm_failed", str(exc), retry_at)
+                    # Fallback to immediate approval if DM fails to send in background
                     await db.log_event(
-                        "background_verification_error",
-                        f"Background verification DM failed: {chat_title}",
-                        {"chat_id": chat_id, "user_id": user_id, "retry_at": retry_at.isoformat(), "error": str(exc)},
-                        "warning"
+                        "background_verification_dm_failed_fallback",
+                        f"Background verification DM failed, approving directly: {chat_title}",
+                        {"chat_id": chat_id, "user_id": user_id, "error": str(exc)},
+                        "warning",
+                    )
+                    await approve_stored_request(
+                        bot,
+                        db,
+                        item,
+                        "background_worker_verification_fallback",
+                        notify_user=True,
+                        claim=False,  # Already claimed!
                     )
                 await asyncio.sleep(0.5)
             except Exception as exc:
@@ -115,6 +123,70 @@ async def process_pending_requests(bot: Bot, db: Database) -> None:
                 await db.log_event(
                     "background_worker_error",
                     "Background verification loop failed for one request",
+                    {"chat_id": item.get("chat_id"), "user_id": item.get("user_id"), "error": str(exc)},
+                    "error",
+                )
+
+        # 2. Process timed-out awaiting_verification requests (older than 5 minutes)
+        five_minutes_ago = utcnow() - timedelta(minutes=5)
+        timed_out_query = {
+            "status": "awaiting_verification",
+            "updated_at": {"$lte": five_minutes_ago},
+            "$or": [
+                {"approval_locked_until": {"$exists": False}},
+                {"approval_locked_until": None},
+                {"approval_locked_until": {"$lte": utcnow()}},
+            ]
+        }
+        timed_out_items = await db.db.pending_requests.find(timed_out_query).to_list(length=100)
+
+        if timed_out_items:
+            logger.info("Background worker: found %s timed-out awaiting_verification requests to auto-approve.", len(timed_out_items))
+
+        for item in timed_out_items:
+            try:
+                await approve_stored_request(
+                    bot,
+                    db,
+                    item,
+                    "background_worker_verification_timeout",
+                    notify_user=True,
+                    claim=True,
+                )
+                await asyncio.sleep(0.2)
+            except Exception as exc:
+                logger.error(f"Error auto-approving timed out request {item.get('user_id')} for chat {item.get('chat_id')}: {exc}", exc_info=True)
+                await db.log_event(
+                    "background_worker_error",
+                    "Background timeout approval loop failed for one request",
+                    {"chat_id": item.get("chat_id"), "user_id": item.get("user_id"), "error": str(exc)},
+                    "error",
+                )
+
+        # 3. Process requests in {"approval_retry", "permission_error", "failed"} that are due for retry
+        retry_items = await db.due_approval_requests({"approval_retry", "permission_error", "failed"}, limit=100)
+
+        if retry_items:
+            logger.info("Background worker: found %s requests due for approval retry.", len(retry_items))
+
+        permission_cache: dict[int, tuple[bool, str | None]] = {}
+        for item in retry_items:
+            try:
+                await approve_stored_request(
+                    bot,
+                    db,
+                    item,
+                    "background_worker_retry",
+                    notify_user=True,
+                    claim=True,
+                    permission_cache=permission_cache,
+                )
+                await asyncio.sleep(0.2)
+            except Exception as exc:
+                logger.error(f"Error retrying background approval for request {item.get('user_id')} for chat {item.get('chat_id')}: {exc}", exc_info=True)
+                await db.log_event(
+                    "background_worker_error",
+                    "Background approval retry loop failed for one request",
                     {"chat_id": item.get("chat_id"), "user_id": item.get("user_id"), "error": str(exc)},
                     "error",
                 )
