@@ -10,8 +10,8 @@ from aiogram import Bot
 from aiogram.exceptions import TelegramRetryAfter
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
-from app.i18n import t
 from app.services.telegram import approve_join_request, can_approve_in_chat
+from app.ui import render_verified_text
 
 
 APPROVAL_RETRY_STATUSES = {
@@ -150,10 +150,6 @@ def _notification_retry_at(item: dict[str, Any], error: str | None) -> datetime 
 
 
 async def send_acceptance_notification(bot: Bot, db: Any, item: dict[str, Any], source: str, lang: str = "en") -> bool:
-    user_doc = await db.user(item["user_id"]) if hasattr(db, "user") else None
-    if not isinstance(user_doc, dict):
-        user_doc = {}
-    lang = (user_doc or {}).get("language") or lang
     markup, link, link_error = await approval_notification_markup(bot, db, item)
     if not markup:
         retry_at = _notification_retry_at(item, link_error)
@@ -166,7 +162,7 @@ async def send_acceptance_notification(bot: Bot, db: Any, item: dict[str, Any], 
         )
         return False
     try:
-        await bot.send_message(_notification_target(item), t(lang, "verified"), reply_markup=markup)
+        await bot.send_message(_notification_target(item), render_verified_text(item.get("chat_title") or item.get("chat_id")), reply_markup=markup)
         await db.mark_notification(item["chat_id"], item["user_id"], "sent", link=link)
         severity = "warning" if link_error else "info"
         await db.log_event(

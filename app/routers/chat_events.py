@@ -7,6 +7,7 @@ from app.keyboards import chat_manage_keyboard, robot_keyboard
 from app.services.formatters import connected_chat_report
 from app.services.approval import approve_stored_request, is_permission_error, retry_delay_for, utcnow
 from app.services.telegram import can_approve_in_chat, inspect_bot_permissions, member_status_value
+from app.ui import render_verification_request_text
 
 router = Router()
 
@@ -141,12 +142,10 @@ async def join_request(request: ChatJoinRequest, bot: Bot, db) -> None:
     if settings.get("verification_enabled"):
         me = await bot.get_me()
         payload = f"verify_{chat.id}_{user.id}"
-        text = (
-            f"𝗛𝗲𝗹𝗹𝗼, 𝘆𝗼𝘂 𝗿𝗲𝗾𝘂𝗲𝘀𝘁𝗲𝗱 𝘁𝗼 𝗷𝗼𝗶𝗻 {chat.title}. "
-            "𝗣𝗹𝗲𝗮𝘀𝗲 𝗽𝗿𝗼𝘃𝗲 𝘆𝗼𝘂 𝗮𝗿𝗲 𝗻𝗼𝘁 𝗮 𝗿𝗼𝗯𝗼𝘁 𝘁𝗼 𝗴𝗲𝘁 𝗮𝗰𝗰𝗲𝘀𝘀."
-        )
+        text = render_verification_request_text(chat.title or chat.id)
+        lang = ((await db.user(user.id)) or {}).get("language") or "en"
         try:
-            await bot.send_message(user_chat_id or user.id, text, reply_markup=robot_keyboard(me.username, payload))
+            await bot.send_message(user_chat_id or user.id, text, reply_markup=robot_keyboard(me.username, payload, lang))
             await db.mark_request(chat.id, user.id, "awaiting_verification")
             await db.log_event("verification_sent", f"Verification sent: {chat.title or chat.id}", {"chat_id": chat.id, "user_id": user.id})
         except Exception as exc:

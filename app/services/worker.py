@@ -15,6 +15,7 @@ from app.services.approval import (
     retry_acceptance_notifications,
     utcnow,
 )
+from app.ui import render_verification_request_text
 
 logger = logging.getLogger(__name__)
 
@@ -89,12 +90,10 @@ async def process_pending_requests(bot: Bot, db: Database) -> None:
                     continue
 
                 payload = f"verify_{chat_id}_{user_id}"
-                text = (
-                    f"𝗛𝗲𝗹𝗹𝗼, 𝘆𝗼𝘂 𝗿𝗲𝗾𝘂𝗲𝘀𝘁𝗲𝗱 𝘁𝗼 𝗷𝗼𝗶𝗻 {chat_title}. "
-                    "𝗣𝗹𝗲𝗮𝘀𝗲 𝗽𝗿𝗼𝘃𝗲 𝘆𝗼𝘂 𝗮𝗿𝗲 𝗻𝗼𝘁 𝗮 𝗿𝗼𝗯𝗼𝘁 𝘁𝗼 𝗴𝗲𝘁 𝗮𝗰𝗰𝗲𝘀𝘀."
-                )
+                text = render_verification_request_text(chat_title)
+                lang = ((await db.user(user_id)) or {}).get("language") or "en"
                 try:
-                    await bot.send_message(user_chat_id or user_id, text, reply_markup=robot_keyboard(me.username, payload))
+                    await bot.send_message(user_chat_id or user_id, text, reply_markup=robot_keyboard(me.username, payload, lang))
                     await db.mark_request(chat_id, user_id, "awaiting_verification")
                     await db.log_event(
                         "background_verification_sent",
